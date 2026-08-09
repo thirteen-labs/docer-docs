@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import type { Document } from '@/types';
