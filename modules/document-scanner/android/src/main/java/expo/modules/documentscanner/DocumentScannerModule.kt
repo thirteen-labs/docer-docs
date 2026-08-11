@@ -8,9 +8,10 @@ import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import expo.modules.kotlin.Promise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -168,8 +169,7 @@ class DocumentScannerModule : Module() {
         val dirs = mutableListOf<Map<String, Any?>>()
         val commonDirs = listOf(
             Environment.DIRECTORY_DOWNLOADS to "Downloads",
-            Environment.DIRECTORY_DOCUMENTS to "Documents",
-            Environment.DIRECTORY_DESKTOP to "Desktop"
+            Environment.DIRECTORY_DOCUMENTS to "Documents"
         )
 
         for ((envDir, label) in commonDirs) {
