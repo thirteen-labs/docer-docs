@@ -189,6 +189,14 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_documents_hidden ON documents(is_hidden);
     `);
   },
+
+  // v6: Document source tracking (import vs discovered)
+  async (db: SQLiteDatabase) => {
+    await db.execAsync(`
+      ALTER TABLE documents ADD COLUMN source TEXT DEFAULT 'import';
+      CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
+    `);
+  },
 ];
 
 const MIGRATION_TABLE = `

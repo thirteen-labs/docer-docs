@@ -1,28 +1,24 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { File, Paths } from 'expo-file-system';
+import { File, FileMode, Paths } from 'expo-file-system';
 import { getDb } from '@/db/connection';
 import { insertDocument, getDocumentByPath, updateDocument } from '@/db/documents';
 import { indexDocumentContent } from '@/db/content-index';
 import type { Document, DocumentType } from '@/types';
+import type { DocumentSource } from '@/types/discovery';
+import {
+  EXTENSION_TYPE_MAP,
+  getDocumentType as getDocumentTypeFromRegistry,
+  getClassification as getClassificationFromRegistry,
+} from '@/services/discovery/registry';
 
-export const EXTENSION_TYPE_MAP: Record<string, DocumentType> = {
-  pdf: 'pdf', epub: 'epub', mobi: 'epub',
-  doc: 'doc', docx: 'docx', xls: 'xls', xlsx: 'xlsx',
-  ppt: 'ppt', pptx: 'pptx', rtf: 'rtf',
-  txt: 'txt', md: 'md', csv: 'csv',
-  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image',
-  webp: 'image', bmp: 'image', svg: 'image',
-  zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive',
-  cbz: 'archive', cbr: 'archive',
-  json: 'code', xml: 'code', html: 'code', css: 'code',
-  js: 'code', ts: 'code', jsx: 'code', tsx: 'code',
-  java: 'code', c: 'code', cpp: 'code', py: 'code',
-  php: 'code', sql: 'code', yaml: 'code', yml: 'code',
-};
+export { EXTENSION_TYPE_MAP } from '@/services/discovery/registry';
 
-function getDocumentType(fileName: string): DocumentType {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return EXTENSION_TYPE_MAP[ext] || 'unknown';
+export interface ImportOptions {
+  source?: DocumentSource;
+  copyLocal?: boolean;
+  mimeType?: string | null;
+  size?: number;
+  modifiedAt?: string;
 }
 
 function isContentUri(uri: string): boolean {
@@ -42,13 +38,18 @@ function getLocalStorageName(uri: string, fileName: string): string {
 async function copyContentUriToLocal(uri: string, fileName: string): Promise<string | null> {
   try {
     const source = new File(uri);
-    const info = await source.info();
+    const info = source.info();
     if (!info.exists) return null;
 
     const localName = getLocalStorageName(uri, fileName);
     const localFile = new File(Paths.document, localName);
-    const buffer = await source.arrayBuffer();
-    await localFile.write(new Uint8Array(buffer));
+    const handle = source.open(FileMode.ReadOnly);
+    try {
+      const bytes = handle.readBytes(info.size ?? 0);
+      localFile.write(new Uint8Array(bytes));
+    } finally {
+      handle.close();
+    }
     return localFile.uri;
   } catch {
     return null;
@@ -67,12 +68,18 @@ export async function pickAndImportDocument(): Promise<Document | null> {
   return importFile(asset.uri, asset.name || 'untitled', asset.mimeType || null);
 }
 
-export async function importFile(uri: string, fileName: string, mimeType: string | null): Promise<Document | null> {
+export async function importFile(
+  uri: string,
+  fileName: string,
+  mimeType: string | null,
+  options?: ImportOptions,
+): Promise<Document | null> {
   try {
     const db = await getDb();
 
     const existing = await getDocumentByPath(db, uri);
     if (existing) {
+      // If a content:// URI was stored locally before, still copy it now for reading
       if (isContentUri(existing.path)) {
         const localPath = await copyContentUriToLocal(existing.path, existing.name);
         if (localPath) {
@@ -83,16 +90,16 @@ export async function importFile(uri: string, fileName: string, mimeType: string
       return existing;
     }
 
-    const file = new File(uri);
-    const info = await file.info();
-    if (!info.exists) return null;
+    const type = getDocumentTypeFromRegistry(fileName);
+    const classification = getClassificationFromRegistry(fileName);
+    const source = options?.source || 'import';
+    const copyLocal = options?.copyLocal !== undefined ? options.copyLocal : true;
 
-    const type = getDocumentType(fileName);
     const id = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
     let localPath = uri;
-    if (isContentUri(uri)) {
+    if (copyLocal && isContentUri(uri)) {
       const copied = await copyContentUriToLocal(uri, fileName);
       if (copied) {
         const existingLocal = await getDocumentByPath(db, copied);
@@ -101,21 +108,33 @@ export async function importFile(uri: string, fileName: string, mimeType: string
       }
     }
 
+    let fileSize = options?.size;
+    if (fileSize === undefined) {
+      try {
+        const file = new File(uri);
+        const info = file.info();
+        fileSize = info.size || 0;
+      } catch {
+        fileSize = 0;
+      }
+    }
+
     const doc: Document = {
       id,
       name: fileName,
       path: localPath,
       type,
-      mimeType,
-      size: info.size || 0,
+      mimeType: options?.mimeType ?? mimeType,
+      size: fileSize,
       pageCount: type === 'pdf' ? 1 : null,
       author: null,
-      createdAt: now,
-      modifiedAt: now,
+      createdAt: options?.modifiedAt || now,
+      modifiedAt: options?.modifiedAt || now,
       addedAt: now,
       metadata: null,
       thumbnailPath: null,
       isHidden: false,
+      source: source as Document['source'],
     };
 
     await insertDocument(db, doc);

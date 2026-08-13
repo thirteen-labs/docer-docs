@@ -15,6 +15,7 @@ export interface Document {
   metadata: Record<string, unknown> | null;
   thumbnailPath: string | null;
   isHidden: boolean;
+  source: 'import' | 'mediastore' | 'filesystem' | 'folder' | 'icloud' | 'downloaded';
 }
 
 export interface ReadingHistory {

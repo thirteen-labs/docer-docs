@@ -1,16 +1,11 @@
 import { File, Directory, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
-import { importFile, EXTENSION_TYPE_MAP } from '@/services/import-service';
+import { importFile } from '@/services/import-service';
 import { scanDeviceDocuments } from '@/services/mediastore-service';
 import DocumentScannerModule, {
   type ScannedDocument,
 } from '@/document-scanner';
-
-const SUPPORTED_EXTENSIONS = new Set(
-  Object.entries(EXTENSION_TYPE_MAP)
-    .filter(([, type]) => type !== 'image')
-    .map(([ext]) => ext)
-);
+import { isSupportedExtension, SUPPORTED_EXTENSIONS } from '@/services/discovery/registry';
 
 export interface ScanProgress {
   filesFound: number;
@@ -21,8 +16,7 @@ export interface ScanProgress {
 export type ScanProgressCallback = (progress: ScanProgress) => void;
 
 function isSupportedFile(file: File): boolean {
-  const ext = file.extension.toLowerCase().replace('.', '');
-  return SUPPORTED_EXTENSIONS.has(ext);
+  return isSupportedExtension(file.name);
 }
 
 async function scanDirectory(
@@ -30,17 +24,19 @@ async function scanDirectory(
   onProgress?: ScanProgressCallback
 ): Promise<number> {
   let imported = 0;
+  let filesFound = 0;
   try {
     const entries = directory.list();
     for (const entry of entries) {
       if (entry instanceof File) {
         if (isSupportedFile(entry)) {
-          const doc = await importFile(entry.uri, entry.name, null);
+          filesFound++;
+          const doc = await importFile(entry.uri, entry.name, null, { source: 'filesystem' });
           if (doc) imported++;
           onProgress?.({
-            filesFound: imported,
+            filesFound,
             filesImported: imported,
-            currentPath: directory.uri,
+            currentPath: entry.uri,
           });
         }
       } else if (entry instanceof Directory) {
@@ -103,7 +99,7 @@ async function scanWithNativeModule(
 
     let imported = 0;
     for (const doc of allDocs) {
-      const result = await importFile(doc.uri, doc.name, null);
+      const result = await importFile(doc.uri, doc.name, null, { source: 'filesystem' });
       if (result) imported++;
       onProgress?.({
         filesFound: allDocs.length,
@@ -196,7 +192,7 @@ export async function scanCustomPath(
 
     let imported = 0;
     for (const doc of docs) {
-      const result = await importFile(doc.uri, doc.name, null);
+      const result = await importFile(doc.uri, doc.name, null, { source: 'filesystem' });
       if (result) imported++;
       onProgress?.({
         filesFound: docs.length,

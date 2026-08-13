@@ -11,26 +11,10 @@ import {
   type SearchResult, type SearchOptions,
   type MediaChangeEvent,
 } from '@obsidian_north/react-native-mediastore';
-import { importFile, EXTENSION_TYPE_MAP } from '@/services/import-service';
+import { importFile } from '@/services/import-service';
 import { getDb } from '@/db/connection';
 import { getDocumentByPath } from '@/db/documents';
 import type { Document } from '@/types';
-
-const SUPPORTED_EXTENSIONS = new Set(
-  Object.entries(EXTENSION_TYPE_MAP)
-    .filter(([, type]) => type !== 'image')
-    .map(([ext]) => ext)
-);
-
-function extractExtension(fileName: string): string {
-  const lastDot = fileName.lastIndexOf('.');
-  return lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : '';
-}
-
-function isSupportedExtension(fileName: string): boolean {
-  const ext = extractExtension(fileName);
-  return ext !== '' && SUPPORTED_EXTENSIONS.has(ext);
-}
 
 function normalizeMediaItemName(item: AudioItem | VideoItem | ImageItem | DocumentItem): string {
   if ('name' in item && item.name) {
@@ -89,7 +73,7 @@ export async function importDeviceDocument(item: DocumentItem): Promise<Document
   const existing = await getDocumentByPath(db, item.uri);
   if (existing) return existing;
 
-  return importFile(item.uri, item.name, item.mimeType || null);
+  return importFile(item.uri, item.name, item.mimeType || null, { source: 'mediastore' });
 }
 
 export async function importMultipleDeviceDocuments(items: DocumentItem[]): Promise<number> {
@@ -117,11 +101,9 @@ export async function scanDeviceDocuments(): Promise<number> {
 
   for (const item of docResult) {
     const fileName = normalizeMediaItemName(item);
-    if (!isSupportedExtension(fileName)) continue;
-
     const existing = await getDocumentByPath(db, item.uri);
     if (!existing) {
-      const doc = await importFile(item.uri, fileName, item.mimeType || null);
+      const doc = await importFile(item.uri, fileName, item.mimeType || null, { source: 'mediastore' });
       if (doc) imported++;
     }
   }
@@ -142,9 +124,7 @@ export async function importAddedMediaEvent(event: MediaChangeEvent): Promise<Do
     if (existing) return existing;
 
     const fileName = normalizeMediaItemName(item);
-    if (!isSupportedExtension(fileName)) return null;
-
-    return importFile(event.uri, fileName, item.mimeType || null);
+    return importFile(event.uri, fileName, item.mimeType || null, { source: 'mediastore' });
   } catch {
     return null;
   }

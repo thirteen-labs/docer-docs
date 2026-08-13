@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import type { Document } from '@/types';
 
-const DOC_COLUMNS = `id, name, path, type, mime_type AS mimeType, size, page_count AS pageCount, author, created_at AS createdAt, modified_at AS modifiedAt, added_at AS addedAt, metadata, thumbnail_path AS thumbnailPath, is_hidden AS isHidden`;
+const DOC_COLUMNS = `id, name, path, type, mime_type AS mimeType, size, page_count AS pageCount, author, created_at AS createdAt, modified_at AS modifiedAt, added_at AS addedAt, metadata, thumbnail_path AS thumbnailPath, is_hidden AS isHidden, source`;
 
 export async function getAllDocuments(db: SQLiteDatabase): Promise<Document[]> {
   return db.getAllAsync<Document>(`SELECT ${DOC_COLUMNS} FROM documents ORDER BY added_at DESC`);
@@ -17,12 +17,13 @@ export async function getDocumentByPath(db: SQLiteDatabase, path: string): Promi
 
 export async function insertDocument(db: SQLiteDatabase, doc: Omit<Document, 'addedAt'>): Promise<void> {
   await db.runAsync(
-    `INSERT INTO documents (id, name, path, type, mime_type, size, page_count, author, created_at, modified_at, metadata, thumbnail_path, is_hidden)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO documents (id, name, path, type, mime_type, size, page_count, author, created_at, modified_at, metadata, thumbnail_path, is_hidden, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     doc.id, doc.name, doc.path, doc.type, doc.mimeType, doc.size, doc.pageCount,
     doc.author, doc.createdAt, doc.modifiedAt,
     doc.metadata ? JSON.stringify(doc.metadata) : null,
-    doc.thumbnailPath, doc.isHidden ? 1 : 0
+    doc.thumbnailPath, doc.isHidden ? 1 : 0,
+    doc.source || 'import'
   );
 }
 
@@ -32,11 +33,14 @@ export async function updateDocument(db: SQLiteDatabase, id: string, updates: Pa
   if (updates.path !== undefined) { fields.push('path = ?'); values.push(updates.path); }
   if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name); }
   if (updates.type !== undefined) { fields.push('type = ?'); values.push(updates.type); }
+  if (updates.size !== undefined) { fields.push('size = ?'); values.push(updates.size); }
   if (updates.pageCount !== undefined) { fields.push('page_count = ?'); values.push(updates.pageCount); }
   if (updates.author !== undefined) { fields.push('author = ?'); values.push(updates.author); }
+  if (updates.modifiedAt !== undefined) { fields.push('modified_at = ?'); values.push(updates.modifiedAt); }
   if (updates.metadata !== undefined) { fields.push('metadata = ?'); values.push(JSON.stringify(updates.metadata)); }
   if (updates.thumbnailPath !== undefined) { fields.push('thumbnail_path = ?'); values.push(updates.thumbnailPath); }
   if (updates.isHidden !== undefined) { fields.push('is_hidden = ?'); values.push(updates.isHidden ? 1 : 0); }
+  if (updates.source !== undefined) { fields.push('source = ?'); values.push(updates.source); }
   if (fields.length === 0) return;
   values.push(id);
   await db.runAsync(`UPDATE documents SET ${fields.join(', ')} WHERE id = ?`, ...values);

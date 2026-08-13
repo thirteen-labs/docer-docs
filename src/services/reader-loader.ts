@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import type { Document } from '@/types';
@@ -9,10 +9,9 @@ export async function loadDocument(id: string): Promise<{ doc: Document | null; 
   if (!doc) return { doc: null, content: null };
 
   try {
-    const content = await FileSystem.readAsStringAsync(doc.path, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
-    return { doc, content };
+    const file = new File(doc.path);
+    const text = await file.text();
+    return { doc, content: text };
   } catch {
     return { doc, content: null };
   }

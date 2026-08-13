@@ -27,6 +27,8 @@ const KEYS = {
   APP_LOCK_ENABLED: 'app_lock_enabled',
   APP_LOCK_TYPE: 'app_lock_type',
   SEARCH_HISTORY: 'search_history',
+  CONNECTED_LOCATIONS: 'connected_locations',
+  LAST_DISCOVERY_TIMESTAMP: 'last_discovery_timestamp',
 } as const;
 
 export const appStorage = {
@@ -110,6 +112,27 @@ export const appStorage = {
     storage.set(KEYS.SEARCH_HISTORY, JSON.stringify(updated));
   },
   clearSearchHistory: () => storage.remove(KEYS.SEARCH_HISTORY),
+
+  getConnectedLocations: (): string[] => {
+    const raw = storage.getString(KEYS.CONNECTED_LOCATIONS);
+    return raw ? JSON.parse(raw) : [];
+  },
+  addConnectedLocation: (uri: string) => {
+    const locations = appStorage.getConnectedLocations();
+    const updated = [uri, ...locations.filter((l) => l !== uri)];
+    storage.set(KEYS.CONNECTED_LOCATIONS, JSON.stringify(updated));
+  },
+  removeConnectedLocation: (uri: string) => {
+    const locations = appStorage.getConnectedLocations();
+    const updated = locations.filter((l) => l !== uri);
+    storage.set(KEYS.CONNECTED_LOCATIONS, JSON.stringify(updated));
+  },
+  setConnectedLocations: (uris: string[]) => {
+    storage.set(KEYS.CONNECTED_LOCATIONS, JSON.stringify(uris));
+  },
+
+  getLastDiscoveryTimestamp: () => storage.getNumber(KEYS.LAST_DISCOVERY_TIMESTAMP) ?? 0,
+  setLastDiscoveryTimestamp: (ts: number) => storage.set(KEYS.LAST_DISCOVERY_TIMESTAMP, ts),
 
   clearAll: () => storage.clearAll(),
 };

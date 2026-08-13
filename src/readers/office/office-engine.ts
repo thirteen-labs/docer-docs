@@ -1,16 +1,18 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 
 export async function renderDocx(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, { encoding: FileSystem.EncodingType.Base64 });
+  const file = new File(filePath);
+  const base64 = await file.base64();
   const arrayBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer;
   const result = await mammoth.convertToHtml({ arrayBuffer });
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Georgia,serif;padding:24px;max-width:700px;margin:0 auto;line-height:1.6;color:#1c1c1e}h1,h2,h3{margin:20px 0 10px}h1{font-size:28px}h2{font-size:22px}h3{font-size:18px}p{margin:10px 0}table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #ccc;padding:8px 12px;text-align:left}th{background:#f5f5f5}</style></head><body>${result.value}</body></html>`;
 }
 
 export async function renderXlsx(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, { encoding: FileSystem.EncodingType.Base64 });
+  const file = new File(filePath);
+  const base64 = await file.base64();
   const workbook = XLSX.read(base64, { type: 'base64' });
   const sheets = workbook.SheetNames.map((name) => {
     const sheet = workbook.Sheets[name];
@@ -30,7 +32,8 @@ export async function renderXlsx(filePath: string): Promise<string> {
 }
 
 export async function renderPptx(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, { encoding: FileSystem.EncodingType.Base64 });
+  const file = new File(filePath);
+  const base64 = await file.base64();
   const arrayBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer;
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(arrayBuffer);

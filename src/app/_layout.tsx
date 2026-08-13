@@ -42,8 +42,11 @@ export default function RootLayout() {
       importAddedMediaEvent(event).then((doc) => {
         if (doc) refreshLibrary();
       }).catch(() => {});
+    } else if (event.type === 'removed') {
+      refreshLibrary();
+    } else if (event.type === 'modified') {
+      refreshLibrary();
     }
-    refreshLibrary();
   });
 
   useEffect(() => {

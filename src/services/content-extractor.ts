@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
 import mammoth from 'mammoth';
@@ -30,7 +30,8 @@ export async function extractTextFromDocument(path: string, type: DocumentType):
 
 async function extractFromTextFile(path: string): Promise<string> {
   try {
-    return await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.UTF8 });
+    const file = new File(path);
+    return await file.text();
   } catch {
     return '';
   }
@@ -38,8 +39,9 @@ async function extractFromTextFile(path: string): Promise<string> {
 
 async function extractFromEpub(path: string): Promise<string> {
   try {
-    const b64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
-    const zip = await JSZip.loadAsync(b64, { base64: true });
+    const file = new File(path);
+    const base64 = await file.base64();
+    const zip = await JSZip.loadAsync(base64, { base64: true });
 
     const containerXml = await zip.file('META-INF/container.xml')?.async('string');
     if (!containerXml) return '';
@@ -98,7 +100,8 @@ async function extractFromEpub(path: string): Promise<string> {
 
 async function extractFromDocx(path: string): Promise<string> {
   try {
-    const base64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
+    const file = new File(path);
+    const base64 = await file.base64();
     const arrayBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer;
     const result = await mammoth.extractRawText({ arrayBuffer });
     return result.value || '';
@@ -109,7 +112,8 @@ async function extractFromDocx(path: string): Promise<string> {
 
 async function extractFromXlsx(path: string): Promise<string> {
   try {
-    const base64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
+    const file = new File(path);
+    const base64 = file.base64();
     const workbook = XLSX.read(base64, { type: 'base64' });
     const textParts: string[] = [];
     for (const sheetName of workbook.SheetNames) {
@@ -127,7 +131,8 @@ async function extractFromXlsx(path: string): Promise<string> {
 
 async function extractFromPptx(path: string): Promise<string> {
   try {
-    const base64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
+    const file = new File(path);
+    const base64 = await file.base64();
     const arrayBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer;
     const zip = await JSZip.loadAsync(arrayBuffer);
     const slideFiles = Object.keys(zip.files).filter((f) => f.match(/ppt\/slides\/slide\d+\.xml$/)).sort();
