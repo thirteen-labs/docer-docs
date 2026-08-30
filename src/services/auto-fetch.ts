@@ -5,7 +5,7 @@ import { scanDeviceDocuments } from '@/services/mediastore-service';
 import DocumentScannerModule, {
   type ScannedDocument,
 } from '@/document-scanner';
-import { isSupportedExtension, SUPPORTED_EXTENSIONS } from '@/services/discovery/registry';
+import { isSupportedExtension, SUPPORTED_EXTENSIONS, getClassification } from '@/services/discovery/registry';
 
 export interface ScanProgress {
   filesFound: number;
@@ -16,7 +16,10 @@ export interface ScanProgress {
 export type ScanProgressCallback = (progress: ScanProgress) => void;
 
 function isSupportedFile(file: File): boolean {
-  return isSupportedExtension(file.name);
+  if (!isSupportedExtension(file.name)) return false;
+  // Docs-only fetch: exclude pure image files (png, jpg, etc.) — they are viewer-supported
+  // but should not be auto-indexed as documents. Images are only indexed when explicitly requested.
+  return getClassification(file.name) === 'document';
 }
 
 async function scanDirectory(

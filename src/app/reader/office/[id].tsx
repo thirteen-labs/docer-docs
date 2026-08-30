@@ -141,8 +141,8 @@ export default function OfficeReaderScreen() {
         ref={webViewRef}
         source={{ html: styledHtml || '' }}
         style={{ flex: 1, backgroundColor: 'transparent' }}
-        javaScriptEnabled
-        domStorageEnabled
+        javaScriptEnabled={false}
+        domStorageEnabled={false}
         startInLoadingState
         renderLoading={() => (
           <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>

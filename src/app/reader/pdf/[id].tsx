@@ -15,13 +15,13 @@ import { useReaderStore } from '@/stores/reader-store';
 import { useDocumentStore } from '@/stores/document-store';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
-import { upsertHistory } from '@/db/history';
+import { upsertHistory, getHistoryByDocument } from '@/db/history';
 import { getBookmarkByPage, deleteBookmarkByPage } from '@/db/bookmarks';
 import { insertHighlight } from '@/db/highlights';
 
 export default function PDFReaderScreen() {
   const c = useTheme();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
   const [docPath, setDocPath] = useState<string | null>(null);
   const [docName, setDocName] = useState('Document');
   const [loading, setLoading] = useState(true);
@@ -37,14 +37,22 @@ export default function PDFReaderScreen() {
   const setZoom = useReaderStore((s) => s.setZoom);
   const showThumbnails = useReaderStore((s) => s.showThumbnails);
   const resetReader = useReaderStore((s) => s.reset);
+  const setCurrentPage = useReaderStore((s) => s.setCurrentPage);
   const openDocument = useDocumentStore((s) => s.openDocument);
   const currentDocument = useDocumentStore((s) => s.currentDocument);
 
   const actionsRef = useRef<PdfViewerActions | null>(null);
+  const initialPageRef = useRef(1);
 
   useEffect(() => {
     if (!id) return;
     const load = async () => {
+      if (preview) {
+        setDocPath(decodeURIComponent(preview));
+        setDocName(name ? decodeURIComponent(name) : 'Document');
+        setLoading(false);
+        return;
+      }
       await openDocument(id);
       const db = await getDb();
       const doc = await getDocumentById(db, id);
@@ -52,6 +60,11 @@ export default function PDFReaderScreen() {
         setDocPath(doc.path);
         setDocName(doc.name);
         if (doc.pageCount) setTotalPages(doc.pageCount);
+        const hist = await getHistoryByDocument(db, id);
+        if (hist?.last_page && hist.last_page > 1) {
+          initialPageRef.current = hist.last_page;
+          setCurrentPage(hist.last_page);
+        }
         setLoading(false);
       } else {
         setError('Document not found');
@@ -60,16 +73,16 @@ export default function PDFReaderScreen() {
     };
     load();
     return () => resetReader();
-  }, [id, openDocument, resetReader, setTotalPages]);
+  }, [id, preview, name, openDocument, resetReader, setTotalPages, setCurrentPage]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || preview) return;
     (async () => {
       const db = await getDb();
       const bm = await getBookmarkByPage(db, id, currentPage);
       setIsBookmarked(!!bm);
     })();
-  }, [id, currentPage]);
+  }, [id, currentPage, preview]);
 
   const recordProgress = useCallback(async () => {
     if (!id || !currentDocument) return;
@@ -90,10 +103,19 @@ export default function PDFReaderScreen() {
   const handleLoad = useCallback((totalPages: number) => {
     setTotalPages(totalPages);
     recordProgress();
+    if (initialPageRef.current > 1) {
+      const target = initialPageRef.current;
+      initialPageRef.current = 1;
+      setTimeout(() => actionsRef.current?.goToPage(target), 50);
+    }
   }, [setTotalPages, recordProgress]);
 
+  useEffect(() => {
+    if (currentPage > 0) recordProgress();
+  }, [currentPage, recordProgress]);
+
   const handleToggleBookmark = useCallback(async () => {
-    if (!id) return;
+    if (!id || preview) return;
     const db = await getDb();
     if (isBookmarked) {
       await deleteBookmarkByPage(db, id, currentPage);
@@ -101,7 +123,7 @@ export default function PDFReaderScreen() {
     } else {
       setShowBookmarkModal(true);
     }
-  }, [id, isBookmarked, currentPage]);
+  }, [id, isBookmarked, currentPage, preview]);
 
   const handleTextSelection = useCallback((text: string) => {
     if (text.trim().length > 0) {

@@ -10,7 +10,7 @@ import { loadDocumentUri } from '@/services/reader-loader';
 import { shareDocument } from '@/services/file-operations';
 
 export default function ImageViewerScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [uri, setUri] = useState<string | null>(null);
   const [fileName, setFileName] = useState('Image');
@@ -36,11 +36,17 @@ export default function ImageViewerScreen() {
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const { doc, uri: fileUri } = await loadDocumentUri(id);
-      if (doc) { setFileName(doc.name); setUri(fileUri); }
+      if (preview) {
+        setFileName(name ? decodeURIComponent(name) : 'Image');
+        setUri(decodeURIComponent(preview));
+        setLoading(false);
+        return;
+      }
+      const { doc, uri: fileUri, resolvedUri } = await loadDocumentUri(id);
+      if (doc) { setFileName(doc.name); setUri(resolvedUri || fileUri); }
       setLoading(false);
     })();
-  }, [id]);
+  }, [id, preview, name]);
 
   if (loading) {
     return (
@@ -68,7 +74,7 @@ export default function ImageViewerScreen() {
           <TouchableOpacity onPress={() => setRotation((r) => (r + 90) % 360)} accessibilityLabel="Rotate">
             <RotateCw size={22} color="#FFF" />
           </TouchableOpacity>
-          {uri && (
+          {uri && !preview && (
             <TouchableOpacity onPress={() => shareDocument(id!)} accessibilityLabel="Share">
               <Share2 size={22} color="#FFF" />
             </TouchableOpacity>

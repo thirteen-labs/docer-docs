@@ -7,30 +7,56 @@ import type { DocumentType } from '@/types';
 
 const TEXT_TYPES: Set<DocumentType> = new Set(['txt', 'md', 'csv', 'rtf']);
 
+// Cap how much text we store in the search index / FTS to avoid DB bloat and OOM.
+const MAX_INDEXED_CHARS = 100_000;
+// Above this size, read only the head of plain-text/code files (full read can exhaust memory).
+const MAX_FULL_TEXT_READ = 2 * 1024 * 1024;
+
 export async function extractTextFromDocument(path: string, type: DocumentType): Promise<string> {
+  let text = '';
   if (TEXT_TYPES.has(type) || type === 'code') {
-    return extractFromTextFile(path);
+    text = await extractFromTextFile(path);
+  } else {
+    switch (type) {
+      case 'epub':
+        text = await extractFromEpub(path);
+        break;
+      case 'doc':
+      case 'docx':
+        text = await extractFromDocx(path);
+        break;
+      case 'xls':
+      case 'xlsx':
+        text = await extractFromXlsx(path);
+        break;
+      case 'ppt':
+      case 'pptx':
+        text = await extractFromPptx(path);
+        break;
+      default:
+        text = '';
+    }
   }
-  switch (type) {
-    case 'epub':
-      return extractFromEpub(path);
-    case 'doc':
-    case 'docx':
-      return extractFromDocx(path);
-    case 'xls':
-    case 'xlsx':
-      return extractFromXlsx(path);
-    case 'ppt':
-    case 'pptx':
-      return extractFromPptx(path);
-    default:
-      return '';
-  }
+  return text.length > MAX_INDEXED_CHARS ? text.slice(0, MAX_INDEXED_CHARS) : text;
 }
 
 async function extractFromTextFile(path: string): Promise<string> {
   try {
     const file = new File(path);
+    const info = file.info();
+    const size = info.size ?? 0;
+    if (size > MAX_FULL_TEXT_READ) {
+      const { FileMode } = await import('expo-file-system');
+      const handle = file.open(FileMode.ReadOnly);
+      try {
+        const bytes = handle.readBytes(MAX_FULL_TEXT_READ);
+        return typeof TextDecoder !== 'undefined'
+          ? new TextDecoder('utf-8').decode(bytes)
+          : '';
+      } finally {
+        handle.close();
+      }
+    }
     return await file.text();
   } catch {
     return '';
@@ -113,7 +139,7 @@ async function extractFromDocx(path: string): Promise<string> {
 async function extractFromXlsx(path: string): Promise<string> {
   try {
     const file = new File(path);
-    const base64 = file.base64();
+    const base64 = await file.base64();
     const workbook = XLSX.read(base64, { type: 'base64' });
     const textParts: string[] = [];
     for (const sheetName of workbook.SheetNames) {

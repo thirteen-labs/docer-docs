@@ -96,10 +96,15 @@ export async function scanMediaStore(options: ScanMediaStoreOptions = {}): Promi
   const seen = new Set<string>();
   const results: DiscoveredDocument[] = [];
 
-  const push = (item: DocumentItem | ImageItem) => {
+  // Docs-only fetch: do not include pure image scans unless explicitly requested.
+  const includeImages = options.includeImages === true;
+
+  const push = (item: DocumentItem | ImageItem, requireDocumentClass = false) => {
     if (options.signal?.aborted) return;
     const doc = toDiscoveredDocument(item);
     if (!doc) return;
+    if (requireDocumentClass && doc.classification !== 'document') return;
+    if (!requireDocumentClass && !includeImages && doc.classification === 'image') return;
     if (seen.has(doc.uri)) return;
     seen.add(doc.uri);
     results.push(doc);
@@ -112,10 +117,10 @@ export async function scanMediaStore(options: ScanMediaStoreOptions = {}): Promi
     // MediaStore query failed — nothing we can index from it.
   }
 
-  if (options.includeImages !== false) {
+  if (includeImages) {
     try {
       const images = await getImages(sort);
-      for (const item of images) push(item);
+      for (const item of images) push(item, true);
     } catch {
       // Image queries may be blocked by permission scope; skip gracefully.
     }

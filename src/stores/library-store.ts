@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import type { Document, ViewMode, SortBy, SortOrder } from '@/types';
 import { getDb } from '@/db/connection';
-import { getAllDocuments, getDocumentsByType, getCategoryCounts } from '@/db/documents';
+import { getAllDocuments, getCategoryCounts } from '@/db/documents';
 
 interface CategoryCount {
   type: string;
   count: number;
 }
+
+const PAGE_SIZE = 60;
 
 interface LibraryState {
   documents: Document[];
@@ -16,11 +18,13 @@ interface LibraryState {
   sortOrder: SortOrder;
   viewMode: ViewMode;
   isLoading: boolean;
+  hasMore: boolean;
   setSelectedCategory: (category: string | null) => void;
   setSortBy: (sort: SortBy) => void;
   setSortOrder: (order: SortOrder) => void;
   setViewMode: (mode: ViewMode) => void;
   fetchDocuments: () => Promise<void>;
+  loadMore: () => Promise<void>;
   fetchCategories: () => Promise<void>;
   refreshLibrary: () => Promise<void>;
 }
@@ -33,6 +37,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   sortOrder: 'desc',
   viewMode: 'grid',
   isLoading: false,
+  hasMore: false,
 
   setSelectedCategory: (selectedCategory) => { set({ selectedCategory }); get().fetchDocuments(); },
   setSortBy: (sortBy) => { set({ sortBy }); get().fetchDocuments(); },
@@ -44,21 +49,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       const db = await getDb();
       const { selectedCategory, sortBy, sortOrder } = get();
-      let docs: Document[];
-      if (selectedCategory && selectedCategory !== 'all') {
-        docs = await getDocumentsByType(db, selectedCategory);
+      const category = selectedCategory && selectedCategory !== 'all' ? selectedCategory : null;
+      const docs = await getAllDocuments(db, { category, sortBy, sortOrder, limit: PAGE_SIZE, offset: 0 });
+      set({ documents: docs, isLoading: false, hasMore: docs.length === PAGE_SIZE });
+    } catch {
+      set({ isLoading: false });
+    }
+  },
+
+  loadMore: async () => {
+    const { hasMore, isLoading, documents, selectedCategory, sortBy, sortOrder } = get();
+    if (!hasMore || isLoading) return;
+    set({ isLoading: true });
+    try {
+      const db = await getDb();
+      const category = selectedCategory && selectedCategory !== 'all' ? selectedCategory : null;
+      const docs = await getAllDocuments(db, { category, sortBy, sortOrder, limit: PAGE_SIZE, offset: documents.length });
+      if (docs.length === 0) {
+        set({ hasMore: false, isLoading: false });
       } else {
-        docs = await getAllDocuments(db);
+        set({ documents: [...documents, ...docs], isLoading: false, hasMore: docs.length === PAGE_SIZE });
       }
-      docs.sort((a, b) => {
-        let cmp = 0;
-        if (sortBy === 'name') cmp = a.name.localeCompare(b.name);
-        else if (sortBy === 'date') cmp = new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime();
-        else if (sortBy === 'type') cmp = a.type.localeCompare(b.type);
-        else if (sortBy === 'size') cmp = (b.size || 0) - (a.size || 0);
-        return sortOrder === 'asc' ? cmp : -cmp;
-      });
-      set({ documents: docs, isLoading: false });
     } catch {
       set({ isLoading: false });
     }

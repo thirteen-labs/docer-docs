@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
-import { DOMParser } from '@xmldom/xmldom';
-import { File } from 'expo-file-system';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import { File, Paths, Directory } from 'expo-file-system';
+import { cacheFileName } from '@/services/uri-resolver';
 
 export interface EpubChapter {
   index: number;
@@ -21,9 +22,39 @@ export interface EpubData {
   coverPath: string | null;
 }
 
+async function resolveFileBuffer(path: string): Promise<ArrayBuffer> {
+  let resolvedPath = path;
+  if (path.startsWith('content://')) {
+    try {
+      const src = new File(path);
+      const info = src.info();
+      if (info.exists) {
+        const cacheDir = new Directory(Paths.cache, 'epub-cache');
+        try { await cacheDir.create({ intermediates: true }); } catch {}
+        const tmp = new File(cacheDir, cacheFileName(path, 'book.epub'));
+        if (tmp.exists) return await tmp.arrayBuffer();
+        const { FileMode } = await import('expo-file-system');
+        try {
+          const handle = src.open(FileMode.ReadOnly);
+          try {
+            const bytes = handle.readBytes(info.size ?? 0);
+            const data = bytes.length > 0 ? bytes : new Uint8Array(await src.arrayBuffer());
+            tmp.write(data);
+          } finally { handle.close(); }
+        } catch {
+          const buf = await src.arrayBuffer();
+          tmp.write(new Uint8Array(buf));
+        }
+        resolvedPath = tmp.uri;
+      }
+    } catch {}
+  }
+  const file = new File(resolvedPath);
+  return file.arrayBuffer();
+}
+
 export async function parseEpub(path: string): Promise<EpubData> {
-  const file = new File(path);
-  const buffer = await file.arrayBuffer();
+  const buffer = await resolveFileBuffer(path);
   const zip = await JSZip.loadAsync(buffer);
 
   const containerXml = await zip.file('META-INF/container.xml')?.async('string');
@@ -95,8 +126,9 @@ export async function parseEpub(path: string): Promise<EpubData> {
     const chapterTitle = titleEls.length > 0 ? text(titleEls[0]) : `Chapter ${index + 1}`;
     const bodies = contentDoc.getElementsByTagName('body');
     const bodyContent = bodies.length > 0 ? serializeBody(bodies[0]) : content;
+    const inlined = await inlineResources(bodyContent, zip, opfDir);
 
-    chapters.push({ index, title: chapterTitle, content: bodyContent, href: itemPath });
+    chapters.push({ index, title: chapterTitle, content: inlined, href: itemPath });
     index++;
   }
 
@@ -112,11 +144,33 @@ function parseXml(xml: string): any {
 }
 
 function findChild(parent: any, tag: string): any {
+  // Prefer direct children first, fallback to descendant search for namespaced epubs
+  if (parent?.childNodes) {
+    for (let i = 0; i < parent.childNodes.length; i++) {
+      const c = parent.childNodes[i];
+      if (c.nodeType === 1) {
+        const name = (c.localName || c.nodeName || '').toLowerCase();
+        if (name === tag.toLowerCase() || c.nodeName === tag) return c;
+      }
+    }
+  }
   const kids = parent.getElementsByTagName(tag);
   return kids.length > 0 ? kids[0] : null;
 }
 
 function getChildren(parent: any, tag: string): any[] {
+  // Return only direct children with matching tag to avoid double-counting nested items
+  const direct: any[] = [];
+  if (parent?.childNodes) {
+    for (let i = 0; i < parent.childNodes.length; i++) {
+      const c = parent.childNodes[i];
+      if (c.nodeType === 1) {
+        const name = (c.localName || c.nodeName || '').toLowerCase();
+        if (name === tag.toLowerCase() || c.nodeName === tag) direct.push(c);
+      }
+    }
+  }
+  if (direct.length > 0) return direct;
   return Array.from(parent.getElementsByTagName(tag));
 }
 
@@ -126,16 +180,93 @@ function text(el: any): string {
 
 function serializeBody(body: any): string {
   let html = '';
+  const serializer = new XMLSerializer();
   const nodes = body.childNodes as any[];
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (node.nodeType === 1) {
-      html += node.toString();
+      try {
+        html += serializer.serializeToString(node);
+      } catch {
+        html += node.toString();
+      }
     } else if (node.nodeType === 3) {
-      html += node.textContent ?? '';
+      const txt = node.textContent ?? '';
+      if (txt.trim()) html += `<p>${txt.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`;
     }
   }
-  return html;
+  return html || body.toString();
+}
+
+function resolveHref(href: string, baseDir: string): string {
+  const frag = href.split('#')[0].split('?')[0];
+  if (!frag) return '';
+  if (frag.startsWith('/')) return frag.slice(1);
+  const stack = baseDir ? baseDir.split('/').filter((p) => p && p !== '.') : [];
+  for (const part of frag.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') stack.pop();
+    else stack.push(part);
+  }
+  return stack.join('/');
+}
+
+function mimeFromName(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'png': return 'image/png';
+    case 'gif': return 'image/gif';
+    case 'svg': return 'image/svg+xml';
+    case 'webp': return 'image/webp';
+    case 'bmp': return 'image/bmp';
+    case 'css': return 'text/css';
+    default: return 'application/octet-stream';
+  }
+}
+
+// Inline relative image/CSS resources as data: URIs so chapters render correctly
+// when loaded from an HTML string (the WebView has no baseUrl into the zip).
+async function inlineResources(html: string, zip: JSZip, baseDir: string): Promise<string> {
+  const imgRe = /src\s*=\s*("([^"]*)"|'([^']*)')/gi;
+  const cssRe = /<link\b[^>]*\bhref\s*=\s*("([^"]*\.css)"|'([^']*\.css)')[^>]*>/gi;
+  const toInline: Array<{ find: string; replace: string }> = [];
+
+  let m: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((m = imgRe.exec(html)) !== null) {
+    const val = m[2] ?? m[3];
+    if (!val || seen.has(val)) continue;
+    if (/^(data:|https?:|mailto:|blob:|#)/i.test(val)) continue;
+    seen.add(val);
+    const resolved = resolveHref(val, baseDir);
+    const entry = zip.file(resolved);
+    if (!entry) continue;
+    try {
+      const data = await entry.async('base64');
+      toInline.push({ find: m[0], replace: `src="data:${mimeFromName(resolved)};base64,${data}"` });
+    } catch {}
+  }
+
+  while ((m = cssRe.exec(html)) !== null) {
+    const val = m[2] ?? m[3];
+    if (!val || seen.has(val)) continue;
+    seen.add(val);
+    const resolved = resolveHref(val, baseDir);
+    const entry = zip.file(resolved);
+    if (!entry) continue;
+    try {
+      const css = await entry.async('string');
+      toInline.push({ find: m[0], replace: `<style>${css}</style>` });
+    } catch {}
+  }
+
+  let out = html;
+  for (const it of toInline) {
+    out = out.split(it.find).join(it.replace);
+  }
+  return out;
 }
 
 export function getEpubHtml(content: string, theme: { bg: string; text: string }, fontSize: number, lineSpacing: number): string {

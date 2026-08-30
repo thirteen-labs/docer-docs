@@ -7,7 +7,9 @@ import { WebView } from 'react-native-webview';
 
 import { useTheme } from '@/hooks/use-theme';
 import { useThemeStore } from '@/stores/theme-store';
+import { File, FileMode } from 'expo-file-system';
 import { loadDocument } from '@/services/reader-loader';
+import { ensureLocalUri } from '@/services/uri-resolver';
 import { getHighlightedHtml, getPlainTextHtml, getMarkdownHtml, getLanguageFromExtension } from '@/readers/text/text-engine';
 import { AddBookmarkModal } from '@/features/annotations/add-bookmark-modal';
 import { AddNoteModal } from '@/features/annotations/add-note-modal';
@@ -26,7 +28,7 @@ function getHtmlBaseUrl(path: string): string {
 
 export default function TextReaderScreen() {
   const c = useTheme();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
   const [content, setContent] = useState<string | null>(null);
   const [rawText, setRawText] = useState('');
   const [renderMode, setRenderMode] = useState<TextRenderMode>('plain');
@@ -55,7 +57,39 @@ export default function TextReaderScreen() {
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const { doc, content: fileContent } = await loadDocument(id);
+      if (preview) {
+        const previewPath = decodeURIComponent(preview);
+        const entryName = name ? decodeURIComponent(name) : 'Document';
+        setFileName(entryName);
+        const resolved = await ensureLocalUri(previewPath, entryName);
+        const ext = entryName.split('.').pop()?.toLowerCase() || '';
+        if (['html', 'htm'].includes(ext)) {
+          setHtmlFilePath(resolved);
+          setLoading(false);
+          return;
+        }
+        let text = '';
+        try {
+          const file = new File(resolved);
+          const info = file.info();
+          const MAX = 2 * 1024 * 1024;
+          text = (info.size ?? 0) > MAX
+            ? (typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8').decode(file.open(FileMode.ReadOnly).readBytes(MAX)) : '')
+            : await file.text();
+        } catch {}
+        if (['md', 'mdx'].includes(ext)) {
+          setRawText(text);
+          setRenderMode('markdown');
+        } else {
+          const lang = getLanguageFromExtension(ext);
+          setRawText(text);
+          setRenderMode(lang ? 'highlighted' : 'plain');
+        }
+        setLoading(false);
+        return;
+      }
+
+      const { doc, content: fileContent, resolvedUri } = await loadDocument(id);
       if (!doc) { setError('Document not found'); setLoading(false); return; }
       setFileName(doc.name);
       const text = fileContent || '';
@@ -67,9 +101,9 @@ export default function TextReaderScreen() {
         return;
       }
 
-      const ext = doc.name.split('.').pop() || '';
+      const ext = doc.name.split('.').pop()?.toLowerCase() || '';
       if (['html', 'htm'].includes(ext)) {
-        setHtmlFilePath(doc.path);
+        setHtmlFilePath(resolvedUri || doc.path);
         setLoading(false);
         return;
       }
@@ -83,16 +117,16 @@ export default function TextReaderScreen() {
       }
       setLoading(false);
     })();
-  }, [id]);
+  }, [id, preview, name]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || preview) return;
     (async () => {
       const db = await getDb();
       const bm = await getBookmarkByPage(db, id, 1);
       setIsBookmarked(!!bm);
     })();
-  }, [id]);
+  }, [id, preview]);
 
   const handleToggleBookmark = useCallback(async () => {
     if (!id) return;
@@ -148,9 +182,9 @@ export default function TextReaderScreen() {
           ref={webViewRef}
           source={{ uri: getHtmlSourceUri(htmlFilePath), baseUrl: getHtmlBaseUrl(htmlFilePath) }}
           style={{ flex: 1, backgroundColor: 'transparent' }}
-          javaScriptEnabled
-          domStorageEnabled
-          allowFileAccess
+          javaScriptEnabled={false}
+          domStorageEnabled={false}
+          allowFileAccess={false}
           startInLoadingState
           renderLoading={() => (
             <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
@@ -162,7 +196,7 @@ export default function TextReaderScreen() {
         <WebView ref={webViewRef} source={{ html: content || '' }} style={{ flex: 1, backgroundColor: 'transparent' }} javaScriptEnabled={false} />
       )}
 
-      {id && (
+      {id && !preview && (
         <>
           <AddBookmarkModal
             visible={showBookmarkModal}

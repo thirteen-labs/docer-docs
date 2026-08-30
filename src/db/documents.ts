@@ -1,10 +1,56 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import type { Document } from '@/types';
+import type { Document, SortBy, SortOrder } from '@/types';
 
 const DOC_COLUMNS = `id, name, path, type, mime_type AS mimeType, size, page_count AS pageCount, author, created_at AS createdAt, modified_at AS modifiedAt, added_at AS addedAt, metadata, thumbnail_path AS thumbnailPath, is_hidden AS isHidden, source`;
 
-export async function getAllDocuments(db: SQLiteDatabase): Promise<Document[]> {
-  return db.getAllAsync<Document>(`SELECT ${DOC_COLUMNS} FROM documents ORDER BY added_at DESC`);
+export interface DocumentQueryOptions {
+  category?: string | null;
+  sortBy?: SortBy;
+  sortOrder?: SortOrder;
+  limit?: number;
+  offset?: number;
+}
+
+function categoryWhere(category?: string | null): { clause: string; params: (string | number)[] } {
+  if (!category) return { clause: '', params: [] };
+  const types = CATEGORY_TYPE_MAP[category];
+  if (!types) return { clause: 'WHERE type = ?', params: [category] };
+  if (category === 'other') {
+    const known = Object.values(CATEGORY_TYPE_MAP).flat().filter((t) => t !== 'unknown');
+    const ph = known.map(() => '?').join(',');
+    return { clause: `WHERE type NOT IN (${ph})`, params: known };
+  }
+  const ph = types.map(() => '?').join(',');
+  return { clause: `WHERE type IN (${ph})`, params: types };
+}
+
+function orderClause(sortBy?: SortBy, sortOrder?: SortOrder): string {
+  const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
+  switch (sortBy) {
+    case 'name': return `ORDER BY name COLLATE NOCASE ${dir}`;
+    case 'type': return `ORDER BY type ${dir}, name COLLATE NOCASE ASC`;
+    case 'size': return `ORDER BY size ${dir}`;
+    case 'date':
+    default: return `ORDER BY added_at ${dir}`;
+  }
+}
+
+async function queryDocuments(db: SQLiteDatabase, opts: DocumentQueryOptions): Promise<Document[]> {
+  const { clause, params } = categoryWhere(opts.category);
+  let sql = `SELECT ${DOC_COLUMNS} FROM documents ${clause} ${orderClause(opts.sortBy, opts.sortOrder)}`;
+  if (opts.limit != null) sql += ` LIMIT ${opts.limit}`;
+  if (opts.offset != null) sql += ` OFFSET ${opts.offset}`;
+  return db.getAllAsync<Document>(sql, ...params);
+}
+
+export async function getAllDocuments(db: SQLiteDatabase, opts?: DocumentQueryOptions): Promise<Document[]> {
+  return queryDocuments(db, opts ?? {});
+}
+
+export async function getDocumentsTotal(db: SQLiteDatabase, category?: string | null): Promise<number> {
+  const { clause, params } = categoryWhere(category ?? null);
+  const row = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM documents ${clause}`, ...params);
+  return row?.c ?? 0;
 }
 
 export async function getDocumentById(db: SQLiteDatabase, id: string): Promise<Document | null> {
@@ -54,13 +100,34 @@ export async function getDocumentsByType(db: SQLiteDatabase, type: string): Prom
   return db.getAllAsync<Document>(`SELECT ${DOC_COLUMNS} FROM documents WHERE type = ? ORDER BY name`, type);
 }
 
+const CATEGORY_TYPE_MAP: Record<string, string[]> = {
+  pdf: ['pdf'],
+  epub: ['epub'],
+  office: ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'rtf'],
+  image: ['image'],
+  archive: ['archive'],
+  text: ['txt', 'md', 'code'],
+  code: ['code', 'txt', 'md'],
+  other: ['unknown'],
+};
+
+export async function getDocumentsByCategory(
+  db: SQLiteDatabase,
+  category: string,
+  opts?: Omit<DocumentQueryOptions, 'category'>,
+): Promise<Document[]> {
+  return queryDocuments(db, { ...(opts ?? {}), category });
+}
+
 export async function getCategoryCounts(db: SQLiteDatabase): Promise<{ type: string; count: number }[]> {
   return db.getAllAsync<{ type: string; count: number }>(
-    `SELECT CASE WHEN type IN ('pdf','epub') THEN type
+    `SELECT CASE
+      WHEN type IN ('pdf') THEN 'pdf'
+      WHEN type IN ('epub') THEN 'epub'
       WHEN type IN ('doc','docx','xls','xlsx','ppt','pptx','csv','rtf') THEN 'office'
-      WHEN type IN ('png','jpg','jpeg','gif','webp','bmp','svg') THEN 'image'
-      WHEN type IN ('zip','rar','7z','tar') THEN 'archive'
-      WHEN type IN ('txt','md','json','xml','html','css','js','ts','jsx','tsx','java','c','cpp','py','php','sql','yaml') THEN 'text'
+      WHEN type = 'image' THEN 'image'
+      WHEN type = 'archive' THEN 'archive'
+      WHEN type IN ('txt','md','code') THEN 'text'
       ELSE 'other' END AS type, COUNT(*) as count FROM documents GROUP BY type`
   );
 }

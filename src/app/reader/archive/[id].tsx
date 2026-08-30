@@ -9,6 +9,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import { listArchiveEntries, extractEntry, type ArchiveEntry } from '@/readers/archive/archive-engine';
+import { File } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 const PREVIEWABLE_EXTS = new Set(['txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'svg', 'pdf']);
@@ -35,6 +36,12 @@ export default function ArchiveExplorerScreen() {
       setDocName(doc.name);
       setDocPath(doc.path);
       try {
+        const stat = new File(doc.path).info();
+        if ((stat.size ?? 0) > 300 * 1024 * 1024) {
+          setError('This archive is too large to browse in this version (over 300 MB).');
+          setLoading(false);
+          return;
+        }
         const all = await listArchiveEntries(doc.path);
         setEntries(all);
       } catch (e: any) {
@@ -65,18 +72,18 @@ export default function ArchiveExplorerScreen() {
         setExtracting(true);
         (async () => {
           try {
-            const db = await getDb();
-            const doc = await getDocumentById(db, id!);
-            if (!doc) return;
-            await extractEntry(doc.path, entry.path);
-            if (ext === 'pdf') router.push(`/reader/pdf/${id}`);
-            else router.push(`/reader/text/${id}`);
+            const tmp = await extractEntry(docPath, entry.path);
+            const preview = encodeURIComponent(tmp);
+            const name = encodeURIComponent(entry.name);
+            if (ext === 'pdf') router.push(`/reader/pdf/${id}?preview=${preview}&name=${name}`);
+            else if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp'].includes(ext)) router.push(`/reader/image/${id}?preview=${preview}&name=${name}`);
+            else router.push(`/reader/text/${id}?preview=${preview}&name=${name}`);
           } catch {}
           setExtracting(false);
         })();
       }
     }
-  }, [id]);
+  }, [id, docPath]);
 
   const goUp = useCallback(() => {
     const parts = currentPath.replace(/\/$/, '').split('/');

@@ -70,7 +70,7 @@ export function FileActionsSheet({ visible, fileName, documentId, onClose, onRen
 
   const handleMoveCopy = async () => {
     if (!folderPath.trim()) return;
-    let ok: boolean;
+    let ok: boolean | string | null;
     if (showMoveCopy === 'move') {
       ok = await moveDocument(documentId, folderPath.trim());
     } else {

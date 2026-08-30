@@ -1,6 +1,6 @@
 import { File, Directory, Paths } from 'expo-file-system';
 
-const BACKUP_DIR_NAME = 'docer-backups';
+const BACKUP_DIR_NAME = 'omnidoc-backups';
 
 async function getBackupDir(): Promise<Directory | null> {
   const dir = new Directory(Paths.cache, BACKUP_DIR_NAME);
@@ -14,11 +14,11 @@ export async function createBackup(): Promise<string | null> {
     if (!backupDir) return null;
 
     const dbDir = new Directory(Paths.document, 'SQLite');
-    const dbFile = new File(dbDir, 'docer.db');
+    const dbFile = new File(dbDir, 'omnidoc.db');
     if (!(await dbFile.exists)) return null;
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFile = new File(backupDir, `docer-backup-${timestamp}.db`);
+    const backupFile = new File(backupDir, `omnidoc-backup-${timestamp}.db`);
     await dbFile.copy(backupFile);
     return backupFile.uri;
   } catch {
@@ -45,7 +45,7 @@ export async function getBackupList(): Promise<{ name: string; size: number; dat
         results.push({
           name: entry.name,
           size: info.size ?? 0,
-          date: entry.name.replace('docer-backup-', '').replace('.db', ''),
+          date: entry.name.replace('omnidoc-backup-', '').replace('.db', ''),
         });
       }
     }

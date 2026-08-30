@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { extractTextFromDocument } from '@/services/content-extractor';
+import { ensureLocalUri } from '@/services/uri-resolver';
 import type { DocumentType } from '@/types';
 
 export interface ContentSearchResult {
@@ -17,7 +18,8 @@ export async function indexDocumentContent(
   path: string,
   type: DocumentType,
 ): Promise<void> {
-  const content = await extractTextFromDocument(path, type);
+  const localPath = await ensureLocalUri(path, documentId);
+  const content = await extractTextFromDocument(localPath, type);
   if (!content.trim()) return;
 
   const existing = await db.getFirstAsync<{ document_id: string }>(
@@ -54,7 +56,8 @@ export async function reindexAllContent(db: SQLiteDatabase): Promise<void> {
 
   for (const doc of docs) {
     try {
-      const content = await extractTextFromDocument(doc.path, doc.type);
+      const localPath = await ensureLocalUri(doc.path, doc.id);
+      const content = await extractTextFromDocument(localPath, doc.type);
       if (!content.trim()) continue;
 
       const existing = await db.getFirstAsync<{ document_id: string }>(

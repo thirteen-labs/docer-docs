@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, useWindowDimensions, Alert, ActivityIndic
 import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { FileText, Grid3X3, List, Plus, FolderOpen, Tag, FileSpreadsheet, Presentation, Image as ImageIcon, FileArchive, Scan } from 'lucide-react-native';
+import { FileText, Grid3X3, List, Plus, FolderOpen, Tag, FileSpreadsheet, Presentation, Image as ImageIcon, FileArchive, Scan, BookOpen, FileType, FileCode } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import * as Sharing from 'expo-sharing';
 
@@ -12,8 +12,7 @@ import { useLibraryStore } from '@/stores/library-store';
 import { useDocumentStore } from '@/stores/document-store';
 import { pickAndImportDocument } from '@/services/import-service';
 import { deleteDocument, shareDocument } from '@/services/file-operations';
-import { scanDeviceDocuments } from '@/services/mediastore-service';
-import { scanWithPicker } from '@/services/auto-fetch';
+import { DocumentDiscoveryManager } from '@/services/discovery/discovery-manager';
 import { FileActionsSheet } from '@/features/file-manager/file-actions';
 import { PropertiesPanel } from '@/features/file-manager/properties-panel';
 import { CollectionPicker } from '@/features/organization/collection-picker';
@@ -43,6 +42,34 @@ function getTypeIcon(type: DocumentType) {
   }
 }
 
+function getCategoryIcon(type: string) {
+  switch (type) {
+    case 'pdf': return FileText;
+    case 'epub': return BookOpen;
+    case 'office': return FileSpreadsheet;
+    case 'image': return ImageIcon;
+    case 'archive': return FileArchive;
+    case 'text': return FileType;
+    case 'code': return FileCode;
+    default: return null;
+  }
+}
+
+function getCategoryDisplayName(type: string): string {
+  switch (type) {
+    case 'all': return 'All';
+    case 'pdf': return 'PDF';
+    case 'epub': return 'EPUB';
+    case 'office': return 'Office';
+    case 'image': return 'Images';
+    case 'archive': return 'Archives';
+    case 'text': return 'Text';
+    case 'code': return 'Code';
+    case 'other': return 'Other';
+    default: return type.charAt(0).toUpperCase() + type.slice(1);
+  }
+}
+
 export default function LibraryScreen() {
   const c = useTheme();
   const { width } = useWindowDimensions();
@@ -53,11 +80,13 @@ export default function LibraryScreen() {
   const sortBy = useLibraryStore((s) => s.sortBy);
   const sortOrder = useLibraryStore((s) => s.sortOrder);
   const isLoading = useLibraryStore((s) => s.isLoading);
+  const hasMore = useLibraryStore((s) => s.hasMore);
   const setSelectedCategory = useLibraryStore((s) => s.setSelectedCategory);
   const setViewMode = useLibraryStore((s) => s.setViewMode);
   const setSortBy = useLibraryStore((s) => s.setSortBy);
   const setSortOrder = useLibraryStore((s) => s.setSortOrder);
   const fetchDocuments = useLibraryStore((s) => s.fetchDocuments);
+  const loadMore = useLibraryStore((s) => s.loadMore);
   const fetchCategories = useLibraryStore((s) => s.fetchCategories);
   const favoriteIds = useDocumentStore((s) => s.favoriteIds);
 
@@ -73,27 +102,31 @@ export default function LibraryScreen() {
     Alert.alert('Scan for Documents', 'Choose how to scan:', [
       { text: 'Device (MediaStore)', onPress: async () => {
         setScanning(true);
-        const count = await scanDeviceDocuments();
-        setScanning(false);
-        if (count > 0) {
-          fetchDocuments();
-          fetchCategories();
-          Alert.alert('Scan Complete', `Found and imported ${count} document(s) from your device.`);
-        } else {
-          Alert.alert('Scan Complete', 'No new documents found on device.');
-        }
+        try {
+          const result = await DocumentDiscoveryManager.discoverAll({ includeImages: false, sources: ['mediastore'] });
+          if (result.imported > 0) {
+            await Promise.all([fetchDocuments(), fetchCategories()]);
+            Alert.alert('Scan Complete', `Found and imported ${result.imported} document(s) from your device.`);
+          } else {
+            Alert.alert('Scan Complete', 'No new documents found on device.');
+          }
+        } catch (e: any) {
+          Alert.alert('Scan Failed', e?.message || 'Could not scan device.');
+        } finally { setScanning(false); }
       }},
       { text: 'Pick Folder...', onPress: async () => {
         setScanning(true);
-        const count = await scanWithPicker();
-        setScanning(false);
-        if (count > 0) {
-          fetchDocuments();
-          fetchCategories();
-          Alert.alert('Scan Complete', `Found and imported ${count} document(s).`);
-        } else {
-          Alert.alert('Scan Complete', 'No new documents found in that folder.');
-        }
+        try {
+          const count = await DocumentDiscoveryManager.scanFolder();
+          if (count > 0) {
+            await Promise.all([fetchDocuments(), fetchCategories()]);
+            Alert.alert('Scan Complete', `Found and imported ${count} document(s).`);
+          } else {
+            Alert.alert('Scan Complete', 'No new documents found in that folder.');
+          }
+        } catch (e: any) {
+          Alert.alert('Scan Failed', e?.message || 'Could not scan folder.');
+        } finally { setScanning(false); }
       }},
       { text: 'Cancel', style: 'cancel' },
     ]);
@@ -206,33 +239,35 @@ export default function LibraryScreen() {
       <FlashList
         horizontal
         showsHorizontalScrollIndicator={false}
-        data={[{ type: 'all', count: 0 }, ...categories]}
+        data={[{ type: 'all', count: categories.reduce((sum, cat) => sum + cat.count, 0) }, ...categories]}
         keyExtractor={(item) => item.type}
         contentContainerStyle={{ paddingHorizontal: 20, gap: 12, paddingVertical: 2, marginBottom: 16 }}
         renderItem={({ item }) => {
           const active = selectedCategory === item.type || (!selectedCategory && item.type === 'all');
+          const CategoryIcon = getCategoryIcon(item.type);
           return (
             <TouchableOpacity
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                paddingHorizontal: 18,
+                paddingHorizontal: 16,
                 paddingVertical: 10,
                 borderRadius: 999,
                 backgroundColor: active ? c.primary : c.surface,
                 borderWidth: active ? 0 : 1,
                 borderColor: c.border,
-                minHeight: 38,
+                minHeight: 40,
               }}
               onPress={() => setSelectedCategory(item.type === 'all' ? null : item.type)}
-              accessibilityLabel={`Filter by ${item.type === 'all' ? 'all types' : item.type}`}
+              accessibilityLabel={`Filter by ${getCategoryDisplayName(item.type)}`}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
             >
+              {CategoryIcon && <CategoryIcon size={16} color={active ? '#FFF' : c.textSecondary} style={{ marginRight: 6 }} />}
               <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#FFF' : c.textSecondary }}>
-                {item.type === 'all' ? 'All' : item.type.charAt(0).toUpperCase() + item.type.slice(1)}
+                {getCategoryDisplayName(item.type)}
               </Text>
-              {item.type !== 'all' && item.count > 0 && (
+              {item.count > 0 && (
                 <View style={{
                   backgroundColor: active ? 'rgba(255,255,255,0.25)' : c.primaryContainer,
                   borderRadius: 12,
@@ -278,8 +313,17 @@ export default function LibraryScreen() {
         numColumns={viewMode === 'grid' ? gridColumnCount : 1}
         renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
-        refreshing={isLoading}
+        refreshing={isLoading && documents.length === 0}
         onRefresh={() => { fetchDocuments(); fetchCategories(); }}
+        onEndReached={() => { if (hasMore) loadMore(); }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          hasMore ? (
+            <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={c.textSecondary} />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           fetchError ? <ErrorState message={fetchError} onRetry={() => { setFetchError(null); fetchDocuments(); fetchCategories(); }} />
           : <EmptyState icon={FileText} title="No documents yet" subtitle="Import your first document to get started" actionLabel="Import Document" onAction={handleImport} />

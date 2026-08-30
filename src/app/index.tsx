@@ -67,7 +67,7 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}>
           <View>
-            <Text style={{ fontSize: 28, fontWeight: '700', color: c.text }}>Docer</Text>
+            <Text style={{ fontSize: 28, fontWeight: '700', color: c.text }}>OmniDoc</Text>
             <Text style={{ fontSize: 14, color: c.textSecondary, marginTop: 2 }}>
               {totalDocs > 0 ? `${totalDocs} documents` : 'Your offline document reader'}
             </Text>

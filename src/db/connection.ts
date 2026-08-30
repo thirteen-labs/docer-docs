@@ -4,7 +4,10 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync('docer.db');
+    dbPromise = SQLite.openDatabaseAsync('omnidoc.db').then(async (db) => {
+      await db.runAsync('PRAGMA foreign_keys = ON;');
+      return db;
+    });
   }
   return dbPromise;
 }

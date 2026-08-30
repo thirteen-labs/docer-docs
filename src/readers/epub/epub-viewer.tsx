@@ -26,6 +26,14 @@ const TEXT_SELECTION_JS = `
   })();
 `;
 
+function sanitizeEpubHtml(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '$1=$2#$2');
+}
+
 const SEARCH_JS = `
 (function() {
   window.__searchResults = [];
@@ -165,7 +173,7 @@ export function EpubViewer({ html, onLoad, onTextSelection }: EpubViewerProps) {
       )}
       <WebView
         ref={ref}
-        source={{ html: html.replace('</body>', `<script>${SEARCH_JS}</script></body>`) }}
+        source={{ html: sanitizeEpubHtml(html).replace('</body>', `<script>${SEARCH_JS}</script></body>`) }}
         style={{ flex: 1, backgroundColor: 'transparent' }}
         onLoad={onLoad}
         onMessage={handleMessage}

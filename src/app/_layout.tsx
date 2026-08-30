@@ -12,8 +12,9 @@ import { useThemeStore } from '@/stores/theme-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { THEME_COLORS } from '@/constants/theme-config';
 import { setupNotifications } from '@/services/notification-service';
-import { autoFetchOnLaunch } from '@/services/auto-fetch';
-import { requestPermissions, useMediaChangeEvent, importAddedMediaEvent } from '@/services/mediastore-service';
+import { DocumentDiscoveryManager } from '@/services/discovery/discovery-manager';
+import { requestPermissions, useMediaChangeEvent } from '@/services/mediastore-service';
+import { enforceCacheLimit } from '@/services/cache-cleanup';
 import { useLibraryStore } from '@/stores/library-store';
 import { appStorage } from '@/storage';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -38,15 +39,9 @@ export default function RootLayout() {
   const colors = THEME_COLORS[theme];
 
   useMediaChangeEvent((event) => {
-    if (event.type === 'added') {
-      importAddedMediaEvent(event).then((doc) => {
-        if (doc) refreshLibrary();
-      }).catch(() => {});
-    } else if (event.type === 'removed') {
-      refreshLibrary();
-    } else if (event.type === 'modified') {
-      refreshLibrary();
-    }
+    DocumentDiscoveryManager.handleMediaChange(event).then((changed) => {
+      if (changed) refreshLibrary();
+    }).catch(() => {});
   });
 
   useEffect(() => {
@@ -58,12 +53,16 @@ export default function RootLayout() {
         try { await requestPermissions(); } catch {}
         appStorage.setOnboardingComplete(true);
       }
-      const count = await autoFetchOnLaunch();
-      if (count > 0) {
-        refreshLibrary();
-      }
+      // Docs-only fetch on launch via the unified discovery manager
+      try {
+        const result = await DocumentDiscoveryManager.discoverAll({ includeImages: false });
+        if (result.imported > 0 || result.updated > 0) {
+          refreshLibrary();
+        }
+      } catch {}
     });
     setupNotifications();
+    enforceCacheLimit().catch(() => {});
   }, [loadFromStorage, loadSettings, refreshLibrary]);
 
   return (

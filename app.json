@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "docer",
-    "slug": "docer",
+    "name": "omnidoc",
+    "slug": "omnidoc",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "docer",
+    "scheme": "omnidoc",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/images/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.cadmus_labs.docer",
+      "package": "com.cadmus_labs.omnidoc",
       "permissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",

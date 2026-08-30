@@ -195,7 +195,7 @@ export function AppLockSetup() {
         )}
 
         <Text style={{ fontSize: 13, color: c.textTertiary, marginBottom: 24, lineHeight: 18 }}>
-          When enabled, Docer will require authentication when reopening the app after it has been in the background.
+          When enabled, OmniDoc will require authentication when reopening the app after it has been in the background.
         </Text>
 
         <View style={{ marginBottom: 16 }}>
@@ -265,7 +265,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     if (appLockType !== 'biometric') return;
     if (biometricLockout) return;
     const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Unlock Docer',
+      promptMessage: 'Unlock OmniDoc',
       fallbackLabel: 'Use PIN',
       disableDeviceFallback: false,
     });
@@ -326,7 +326,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
         <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: c.primaryContainer, alignItems: 'center', justifyContent: 'center', marginBottom: 24 }}>
           <Lock size={36} color={c.primary} />
         </View>
-        <Text style={{ fontSize: 22, fontWeight: '700', color: c.text, marginBottom: 8 }}>Docer Locked</Text>
+        <Text style={{ fontSize: 22, fontWeight: '700', color: c.text, marginBottom: 8 }}>OmniDoc Locked</Text>
         <Text style={{ fontSize: 14, color: c.textSecondary, textAlign: 'center', marginBottom: 32 }}>
           {showPinMode ? 'Enter your PIN to unlock' : 'Authenticate to continue'}
         </Text>

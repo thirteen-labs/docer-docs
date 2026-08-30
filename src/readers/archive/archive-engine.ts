@@ -1,4 +1,5 @@
 import { File, Directory, Paths } from 'expo-file-system';
+import { cacheFileName } from '@/services/uri-resolver';
 
 export interface ArchiveEntry {
   name: string;
@@ -10,6 +11,11 @@ export interface ArchiveEntry {
 export type ArchiveFormat = 'zip' | 'rar' | '7z' | 'tar' | 'cbr' | 'cbz' | 'unknown';
 
 export function detectArchiveFormat(filePath: string): ArchiveFormat {
+  const lower = filePath.toLowerCase();
+  // Handle compound extensions like .tar.gz
+  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return 'tar';
+  if (lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2')) return 'tar';
+  if (lower.endsWith('.tar.xz') || lower.endsWith('.txz')) return 'tar';
   const ext = filePath.split('.').pop()?.toLowerCase() || '';
   switch (ext) {
     case 'zip': return 'zip';
@@ -18,8 +24,41 @@ export function detectArchiveFormat(filePath: string): ArchiveFormat {
     case 'cbr': return 'cbr';
     case '7z': return '7z';
     case 'tar': return 'tar';
+    case 'gz':
+    case 'bz2':
+    case 'xz': return 'tar';
     default: return 'unknown';
   }
+}
+
+async function resolveArchivePath(filePath: string): Promise<string> {
+  if (!filePath.startsWith('content://')) return filePath;
+  try {
+    const src = new File(filePath);
+    const info = src.info();
+    if (!info.exists) return filePath;
+    const cacheDir = new Directory(Paths.cache, 'archive-cache');
+    try { await cacheDir.create({ intermediates: true }); } catch {}
+    const ext = detectArchiveFormat(filePath) === 'unknown' ? 'zip' : filePath.split('.').pop() || 'zip';
+    const tmp = new File(cacheDir, cacheFileName(filePath, `archive.${ext}`));
+    if (tmp.exists) return tmp.uri;
+    const { FileMode } = await import('expo-file-system');
+    try {
+      const handle = src.open(FileMode.ReadOnly);
+      try {
+        const bytes = handle.readBytes(info.size ?? 0);
+        if (bytes.length > 0) tmp.write(bytes);
+        else {
+          const buf = await src.arrayBuffer();
+          tmp.write(new Uint8Array(buf));
+        }
+      } finally { handle.close(); }
+    } catch {
+      const buf = await src.arrayBuffer();
+      tmp.write(new Uint8Array(buf));
+    }
+    return tmp.uri;
+  } catch { return filePath; }
 }
 
 function parseTarHeader(view: DataView, offset: number): { name: string; size: number; type: string } | null {
@@ -40,14 +79,15 @@ async function getTempDir(): Promise<Directory> {
 }
 
 export async function listArchiveEntries(filePath: string): Promise<ArchiveEntry[]> {
-  const format = detectArchiveFormat(filePath);
+  const resolved = await resolveArchivePath(filePath);
+  const format = detectArchiveFormat(resolved);
 
   if (format === 'zip' || format === 'cbz') {
-    return listZipEntries(filePath);
+    return listZipEntries(resolved);
   }
 
   if (format === 'tar') {
-    return listTarEntries(filePath);
+    return listTarEntries(resolved);
   }
 
   throw new Error(
@@ -62,14 +102,27 @@ async function listZipEntries(filePath: string): Promise<ArchiveEntry[]> {
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(buffer);
   const entries: ArchiveEntry[] = [];
+  const promises: Promise<void>[] = [];
   zip.forEach((relativePath, entry) => {
-    entries.push({
-      name: relativePath.split('/').pop() || relativePath,
-      path: relativePath,
-      isDirectory: entry.dir,
-      size: entry.dir ? 0 : ((entry as any).uncompressedSize ?? 0),
-    });
+    // size via async content length when available; fallback to 0 for dirs
+    const push = async () => {
+      let size = 0;
+      if (!entry.dir) {
+        try {
+          const data = await entry.async('uint8array');
+          size = data.byteLength;
+        } catch { size = 0; }
+      }
+      entries.push({
+        name: relativePath.replace(/\/$/, '').split('/').pop() || relativePath,
+        path: relativePath,
+        isDirectory: entry.dir,
+        size,
+      });
+    };
+    promises.push(push());
   });
+  await Promise.all(promises);
   entries.sort((a, b) => {
     if (a.isDirectory && !b.isDirectory) return -1;
     if (!a.isDirectory && b.isDirectory) return 1;
@@ -111,14 +164,25 @@ async function listTarEntries(filePath: string): Promise<ArchiveEntry[]> {
 }
 
 export async function extractEntry(filePath: string, entryPath: string): Promise<string> {
-  const format = detectArchiveFormat(filePath);
+  const resolved = await resolveArchivePath(filePath);
+  const format = detectArchiveFormat(resolved);
+
+  // Guard against loading extremely large archives fully into memory (OOM crash path).
+  try {
+    const size = new File(resolved).info().size ?? 0;
+    if (size > 300 * 1024 * 1024) {
+      throw new Error('This archive is too large to extract in this version (over 300 MB).');
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('too large')) throw e;
+  }
 
   if (format === 'zip' || format === 'cbz') {
-    return extractZipEntry(filePath, entryPath);
+    return extractZipEntry(resolved, entryPath);
   }
 
   if (format === 'tar') {
-    return extractTarEntry(filePath, entryPath);
+    return extractTarEntry(resolved, entryPath);
   }
 
   throw new Error(`Extraction not supported for ${format} archives`);
@@ -150,8 +214,10 @@ async function extractTarEntry(filePath: string, entryPath: string): Promise<str
     const header = parseTarHeader(view, offset);
     if (!header) break;
     if (header.name === entryPath && header.type !== '5') {
-      const contentBytes = new Uint8Array(bytes.buffer, offset + 512, header.size);
-      const ext = entryPath.split('.').pop() || 'bin';
+      // Copy bytes to avoid referencing underlying buffer beyond slice
+      const src = bytes.subarray(offset + 512, offset + 512 + header.size);
+      const contentBytes = new Uint8Array(src);
+      const ext = entryPath.split('.').pop()?.split('?')[0] || 'bin';
       const tempDir = await getTempDir();
       const tempFile = new File(tempDir, `archive_${Date.now()}.${ext}`);
       await tempFile.write(contentBytes);

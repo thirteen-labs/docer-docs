@@ -6,10 +6,9 @@ import { indexDocumentContent } from '@/db/content-index';
 import type { Document, DocumentType } from '@/types';
 import type { DocumentSource } from '@/types/discovery';
 import {
-  EXTENSION_TYPE_MAP,
   getDocumentType as getDocumentTypeFromRegistry,
-  getClassification as getClassificationFromRegistry,
 } from '@/services/discovery/registry';
+import { validateSignature, canValidateSignature } from '@/services/discovery/signatures';
 
 export { EXTENSION_TYPE_MAP } from '@/services/discovery/registry';
 
@@ -43,12 +42,24 @@ async function copyContentUriToLocal(uri: string, fileName: string): Promise<str
 
     const localName = getLocalStorageName(uri, fileName);
     const localFile = new File(Paths.document, localName);
-    const handle = source.open(FileMode.ReadOnly);
+    if (localFile.exists) return localFile.uri;
     try {
-      const bytes = handle.readBytes(info.size ?? 0);
-      localFile.write(new Uint8Array(bytes));
-    } finally {
-      handle.close();
+      const handle = source.open(FileMode.ReadOnly);
+      try {
+        let bytes: Uint8Array | null = null;
+        try { bytes = handle.readBytes(info.size ?? 0); } catch {}
+        if (bytes && bytes.length > 0) {
+          localFile.write(bytes);
+        } else {
+          const buf = await source.arrayBuffer();
+          localFile.write(new Uint8Array(buf));
+        }
+      } finally {
+        handle.close();
+      }
+    } catch {
+      const buf = await source.arrayBuffer();
+      localFile.write(new Uint8Array(buf));
     }
     return localFile.uri;
   } catch {
@@ -90,8 +101,7 @@ export async function importFile(
       return existing;
     }
 
-    const type = getDocumentTypeFromRegistry(fileName);
-    const classification = getClassificationFromRegistry(fileName);
+    const type = getDocumentTypeFromRegistry(fileName, options?.mimeType ?? mimeType);
     const source = options?.source || 'import';
     const copyLocal = options?.copyLocal !== undefined ? options.copyLocal : true;
 
@@ -119,11 +129,25 @@ export async function importFile(
       }
     }
 
+    let docType: DocumentType = type;
+    const ext = fileName.includes('.') ? fileName.split('.').pop()!.toLowerCase() : '';
+    if (canValidateSignature(ext)) {
+      try {
+        const valid = await validateSignature(localPath, ext);
+        if (!valid) {
+          console.warn(`[importFile] signature mismatch for ${fileName}; importing as unknown`);
+          docType = 'unknown';
+        }
+      } catch {
+        // keep extension-based type on validation error
+      }
+    }
+
     const doc: Document = {
       id,
       name: fileName,
       path: localPath,
-      type,
+      type: docType,
       mimeType: options?.mimeType ?? mimeType,
       size: fileSize,
       pageCount: type === 'pdf' ? 1 : null,
@@ -139,7 +163,7 @@ export async function importFile(
 
     await insertDocument(db, doc);
 
-    indexDocumentContent(db, id, localPath, type).catch(() => {});
+    indexDocumentContent(db, id, localPath, docType).catch(() => {});
 
     return doc;
   } catch {

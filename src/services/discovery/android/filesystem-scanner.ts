@@ -24,6 +24,9 @@ const FOLDER_SOURCE: DocumentSource = 'folder';
 
 function toDiscoveredDocument(doc: ScannedDocument, source: DocumentSource): DiscoveredDocument | null {
   if (!isSupportedExtension(doc.name)) return null;
+  const classification = getClassification(doc.name);
+  // Docs-only fetch: filesystem scanner should not return pure images
+  if (classification === 'image') return null;
   return {
     id: hashString(doc.uri),
     name: doc.name,
@@ -33,7 +36,7 @@ function toDiscoveredDocument(doc: ScannedDocument, source: DocumentSource): Dis
     modifiedAt: doc.lastModified || undefined,
     source,
     accessible: true,
-    classification: getClassification(doc.name),
+    classification,
   };
 }
 

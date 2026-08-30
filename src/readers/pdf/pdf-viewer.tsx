@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator, Platform } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import Pdf, { type PdfRef } from './pdf-native';
-import { getViewerHtml, getPdfSourceUri } from './pdf-engine';
+import { getViewerHtml, getPdfSourceUri, resolvePdfUri } from './pdf-engine';
 import { useTheme } from '@/hooks/use-theme';
 import { useReaderStore } from '@/stores/reader-store';
 
@@ -45,7 +45,13 @@ const TEXT_SELECTION_JS = `
 
 export function PdfViewer({ path, onLoad, onError, onTextSelection, actionRef }: PdfViewerProps) {
   const c = useTheme();
-  const uri = getPdfSourceUri(path);
+  const [resolvedUri, setResolvedUri] = useState(() => getPdfSourceUri(path));
+  useEffect(() => {
+    let cancelled = false;
+    resolvePdfUri(path).then(u => { if (!cancelled) setResolvedUri(getPdfSourceUri(u)); });
+    return () => { cancelled = true; };
+  }, [path]);
+  const uri = resolvedUri;
 
   const currentPage = useReaderStore((s) => s.currentPage);
   const zoom = useReaderStore((s) => s.zoom);
@@ -146,8 +152,12 @@ export function PdfViewer({ path, onLoad, onError, onTextSelection, actionRef }:
 
   const handleNativeError = useCallback((error: object) => {
     const message = (error as { message?: string })?.message || String(error);
+    // Fallback to WebView engine for providers that native pdf cannot read (content://, encrypted, etc.)
+    if (modeRef.current === 'native') {
+      switchToEngine(null);
+    }
     onError?.(message);
-  }, [onError]);
+  }, [onError, switchToEngine]);
 
   const handleEngineLoadEnd = useCallback(() => {
     engineRef.current?.postMessage(JSON.stringify({ type: 'load', url: uri }));
@@ -206,6 +216,8 @@ export function PdfViewer({ path, onLoad, onError, onTextSelection, actionRef }:
         onLoadEnd={handleEngineLoadEnd}
         javaScriptEnabled
         domStorageEnabled
+        allowFileAccess
+        allowFileAccessFromFileURLs
         startInLoadingState
         renderLoading={() => (
           <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>

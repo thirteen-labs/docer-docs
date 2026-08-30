@@ -1,9 +1,40 @@
 import { Platform } from 'react-native';
-import { File, Paths } from 'expo-file-system';
+import { File, Paths, Directory } from 'expo-file-system';
+import { cacheFileName } from '@/services/uri-resolver';
 
 export function getPdfSourceUri(path: string): string {
   if (Platform.OS === 'web') return path;
-  return path.startsWith('file://') ? path : `file://${path}`;
+  if (path.startsWith('content://') || path.startsWith('file://')) return path;
+  return `file://${path}`;
+}
+
+export async function resolvePdfUri(path: string): Promise<string> {
+  if (!path.startsWith('content://')) return getPdfSourceUri(path);
+  try {
+    const src = new File(path);
+    const info = src.info();
+    if (!info.exists) return path;
+    const cacheDir = new Directory(Paths.cache, 'pdf-cache');
+    try { await cacheDir.create({ intermediates: true }); } catch {}
+    const tmp = new File(cacheDir, cacheFileName(path, 'pdf'));
+    if (tmp.exists) return tmp.uri;
+    const { FileMode } = await import('expo-file-system');
+    try {
+      const handle = src.open(FileMode.ReadOnly);
+      try {
+        const bytes = handle.readBytes(info.size ?? 0);
+        if (bytes.length > 0) tmp.write(bytes);
+        else {
+          const buf = await src.arrayBuffer();
+          tmp.write(new Uint8Array(buf));
+        }
+      } finally { handle.close(); }
+    } catch {
+      const buf = await src.arrayBuffer();
+      tmp.write(new Uint8Array(buf));
+    }
+    return tmp.uri;
+  } catch { return path; }
 }
 
 let cachedPdfJsBase64: string | null = null;
@@ -13,15 +44,29 @@ async function loadPdfJsAssets(): Promise<{ pdfJs: string; worker: string }> {
   if (cachedPdfJsBase64 && cachedWorkerBase64) {
     return { pdfJs: cachedPdfJsBase64, worker: cachedWorkerBase64 };
   }
-  const pdfJsFile = new File(Paths.bundle, 'assets', 'pdfjs', 'pdf.min.js');
-  const workerFile = new File(Paths.bundle, 'assets', 'pdfjs', 'pdf.worker.min.js');
-  cachedPdfJsBase64 = await pdfJsFile.base64();
-  cachedWorkerBase64 = await workerFile.base64();
-  return { pdfJs: cachedPdfJsBase64, worker: cachedWorkerBase64 };
+  try {
+    const pdfJsFile = new File(Paths.bundle, 'assets', 'pdfjs', 'pdf.min.js');
+    const workerFile = new File(Paths.bundle, 'assets', 'pdfjs', 'pdf.worker.min.js');
+    cachedPdfJsBase64 = await pdfJsFile.base64();
+    cachedWorkerBase64 = await workerFile.base64();
+    return { pdfJs: cachedPdfJsBase64, worker: cachedWorkerBase64 };
+  } catch {
+    // Assets missing (e.g., dev / web) — return empty so engine falls back to CDN/native
+    return { pdfJs: '', worker: '' };
+  }
 }
 
 export async function getViewerHtml(): Promise<string> {
-  const { pdfJs, worker } = await loadPdfJsAssets();
+  let pdfJs = '';
+  let worker = '';
+  try {
+    const assets = await loadPdfJsAssets();
+    pdfJs = assets.pdfJs;
+    worker = assets.worker;
+  } catch {
+    pdfJs = '';
+    worker = '';
+  }
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -64,6 +109,17 @@ var PDFJS_BASE64='${pdfJs}';
 var WORKER_BASE64='${worker}';
 function injectPDFjs(cb){
   if(typeof pdfjsLib!=='undefined'&&pdfjsLib){cb();return}
+  if(!PDFJS_BASE64){
+    var s2=D.createElement('script');
+    s2.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s2.onload=function(){
+      pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      cb();
+    };
+    s2.onerror=function(){ D.getElementById('viewer').innerHTML='<div class="error">Failed to load PDF engine.</div>'; W.ReactNativeWebView&&W.ReactNativeWebView.postMessage(JSON.stringify({type:'error',message:'PDF engine unavailable'})) };
+    D.head.appendChild(s2);
+    return;
+  }
   var bin=atob(PDFJS_BASE64);
   var arr=new Uint8Array(bin.length);
   for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
@@ -73,11 +129,13 @@ function injectPDFjs(cb){
   s.src=url;
   s.onload=function(){
     URL.revokeObjectURL(url);
-    var wbin=atob(WORKER_BASE64);
-    var warr=new Uint8Array(wbin.length);
-    for(var j=0;j<wbin.length;j++)warr[j]=wbin.charCodeAt(j);
-    var wblob=new Blob([warr],{type:'application/javascript'});
-    pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(wblob);
+    if(WORKER_BASE64){
+      var wbin=atob(WORKER_BASE64);
+      var warr=new Uint8Array(wbin.length);
+      for(var j=0;j<wbin.length;j++)warr[j]=wbin.charCodeAt(j);
+      var wblob=new Blob([warr],{type:'application/javascript'});
+      pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(wblob);
+    }
     cb();
   };
   s.onerror=function(){ D.getElementById('viewer').innerHTML='<div class="error">Failed to load PDF engine.</div>' };

@@ -54,7 +54,7 @@ export function ExportScreen() {
             created: d.createdAt, modified: d.modifiedAt, added: d.addedAt,
           }));
           const csv = toCsv(rows);
-          const file = new File(exportDir, `docer-library-${timestamp}.csv`);
+          const file = new File(exportDir, `omnidoc-library-${timestamp}.csv`);
           await file.write(csv);
           await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
           break;
@@ -66,7 +66,7 @@ export function ExportScreen() {
             created: n.createdAt, updated: n.updatedAt,
           }));
           const csv = toCsv(rows);
-          const file = new File(exportDir, `docer-notes-${timestamp}.csv`);
+          const file = new File(exportDir, `omnidoc-notes-${timestamp}.csv`);
           await file.write(csv);
           await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
           break;
@@ -78,7 +78,7 @@ export function ExportScreen() {
             text: h.text, created: h.createdAt,
           }));
           const csv = toCsv(rows);
-          const file = new File(exportDir, `docer-highlights-${timestamp}.csv`);
+          const file = new File(exportDir, `omnidoc-highlights-${timestamp}.csv`);
           await file.write(csv);
           await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
           break;
@@ -90,7 +90,7 @@ export function ExportScreen() {
             chapter: b.chapter || '', created: b.createdAt,
           }));
           const csv = toCsv(rows);
-          const file = new File(exportDir, `docer-bookmarks-${timestamp}.csv`);
+          const file = new File(exportDir, `omnidoc-bookmarks-${timestamp}.csv`);
           await file.write(csv);
           await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
           break;
@@ -106,7 +106,7 @@ export function ExportScreen() {
             documentsOpened: s.documents_opened,
           }));
           const csv = toCsv(rows);
-          const file = new File(exportDir, `docer-stats-${timestamp}.csv`);
+          const file = new File(exportDir, `omnidoc-stats-${timestamp}.csv`);
           await file.write(csv);
           await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
           break;

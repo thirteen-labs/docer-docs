@@ -33,7 +33,7 @@ import { isSupportedExtension } from '@/services/discovery/registry';
 import { File } from 'expo-file-system';
 import type { MediaChangeEvent } from '@obsidian_north/react-native-mediastore';
 
-const INDEXABLE_TYPES = new Set(['epub', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'rtf', 'code']);
+const INDEXABLE_TYPES = new Set(['epub', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'rtf', 'code', 'pdf']);
 
 /**
  * Central orchestrator for device-wide document discovery.
@@ -51,7 +51,7 @@ export const DocumentDiscoveryManager = {
     const {
       sources,
       includeImages,
-      validateSignatures: doValidation = false,
+      validateSignatures: doValidation = true,
       onProgress,
       signal,
     } = options;
@@ -121,6 +121,9 @@ export const DocumentDiscoveryManager = {
    */
   async index(item: DiscoveredDocument): Promise<Document | null> {
     if (!isSupportedExtension(item.name)) return null;
+    // Docs-only fetch: skip pure image files unless caller explicitly opted into includeImages
+    // The classification is already set by the scanner; enforce it here as well.
+    if (item.classification === 'image') return null;
 
     const importOpts: ImportOptions = {
       source: item.source,
