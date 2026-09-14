@@ -9,6 +9,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import { renderDocx, renderXlsx, renderPptx } from '@/readers/office/office-engine';
+import { upsertHistory } from '@/db/history';
 
 export default function OfficeReaderScreen() {
   const c = useTheme();
@@ -48,6 +49,17 @@ export default function OfficeReaderScreen() {
           rendered = await renderDocx(doc.path);
         }
         setHtml(rendered);
+        await upsertHistory(db, {
+          id: `hist-${id}`,
+          documentId: id,
+          lastPage: 1,
+          lastPosition: null,
+          progress: 1,
+          startedAt: new Date().toISOString(),
+          lastReadAt: new Date().toISOString(),
+          readCount: 1,
+          totalReadingTime: 0,
+        });
       } catch (e: any) {
         setError(e.message || 'Failed to render document');
       }

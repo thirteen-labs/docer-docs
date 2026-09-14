@@ -6,10 +6,12 @@ import { ArrowLeft, ZoomIn, ZoomOut, RotateCw, Share2 } from 'lucide-react-nativ
 import { Image } from 'expo-image';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 
+import { useTheme } from '@/hooks/use-theme';
 import { loadDocumentUri } from '@/services/reader-loader';
 import { shareDocument } from '@/services/file-operations';
 
 export default function ImageViewerScreen() {
+  const c = useTheme();
   const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [uri, setUri] = useState<string | null>(null);
@@ -50,38 +52,38 @@ export default function ImageViewerScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#FFF" />
+      <SafeAreaView style={{ flex: 1, backgroundColor: c.background, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={c.primary} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 }}>
         <TouchableOpacity onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <ArrowLeft size={22} color="#FFF" />
-          <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{fileName}</Text>
+          <ArrowLeft size={22} color={c.text} />
+          <Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{fileName}</Text>
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <TouchableOpacity onPress={handleZoomOut} accessibilityLabel="Zoom out">
-            <ZoomOut size={22} color="#FFF" />
+            <ZoomOut size={22} color={c.text} />
           </TouchableOpacity>
-          <Text style={{ color: '#FFF', fontSize: 13, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
+          <Text style={{ color: c.text, fontSize: 13, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
           <TouchableOpacity onPress={handleZoomIn} accessibilityLabel="Zoom in">
-            <ZoomIn size={22} color="#FFF" />
+            <ZoomIn size={22} color={c.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setRotation((r) => (r + 90) % 360)} accessibilityLabel="Rotate">
-            <RotateCw size={22} color="#FFF" />
+            <RotateCw size={22} color={c.text} />
           </TouchableOpacity>
           {uri && !preview && (
             <TouchableOpacity onPress={() => shareDocument(id!)} accessibilityLabel="Share">
-              <Share2 size={22} color="#FFF" />
+              <Share2 size={22} color={c.text} />
             </TouchableOpacity>
           )}
         </View>
       </View>
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.readerBackground }}>
         {uri && (
           <Animated.View style={[animatedStyle]}>
             <Image source={{ uri }} style={{ width: screenWidth - 32, height: screenHeight - 120 }} contentFit="contain" />

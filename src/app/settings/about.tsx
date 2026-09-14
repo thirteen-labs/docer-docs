@@ -51,6 +51,9 @@ export default function AboutScreen() {
           <Text style={{ color: c.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 12 }}>
             Built with React Native and Expo. All document processing happens locally on your device.
           </Text>
+          <Text style={{ color: c.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 12 }}>
+            Special thanks to thirteen labs and obsidian Northern for their contributions.
+          </Text>
         </View>
 
         <View style={{ backgroundColor: c.surface, borderRadius: 16, padding: 20, marginBottom: 16 }}>

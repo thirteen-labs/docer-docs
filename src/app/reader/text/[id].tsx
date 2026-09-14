@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, startTransition } from 'react
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft, Bookmark, WrapText, ListOrdered } from 'lucide-react-native';
+import { ArrowLeft, Bookmark, WrapText, ListOrdered, StickyNote } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
 
 import { useTheme } from '@/hooks/use-theme';
@@ -15,6 +15,7 @@ import { AddBookmarkModal } from '@/features/annotations/add-bookmark-modal';
 import { AddNoteModal } from '@/features/annotations/add-note-modal';
 import { getDb } from '@/db/connection';
 import { getBookmarkByPage, deleteBookmarkByPage } from '@/db/bookmarks';
+import { upsertHistory } from '@/db/history';
 
 type TextRenderMode = 'plain' | 'highlighted' | 'markdown';
 
@@ -128,6 +129,26 @@ export default function TextReaderScreen() {
     })();
   }, [id, preview]);
 
+  const recordProgress = useCallback(async () => {
+    if (!id || preview) return;
+    const db = await getDb();
+    await upsertHistory(db, {
+      id: `hist-${id}`,
+      documentId: id,
+      lastPage: 1,
+      lastPosition: null,
+      progress: 1,
+      startedAt: new Date().toISOString(),
+      lastReadAt: new Date().toISOString(),
+      readCount: 1,
+      totalReadingTime: 0,
+    });
+  }, [id, preview]);
+
+  useEffect(() => {
+    if (!loading && !error) recordProgress();
+  }, [loading, error, recordProgress]);
+
   const handleToggleBookmark = useCallback(async () => {
     if (!id) return;
     const db = await getDb();
@@ -171,6 +192,9 @@ export default function TextReaderScreen() {
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { setShowLineNumbers(!showLineNumbers); }} style={{ padding: 6, opacity: showLineNumbers ? 1 : 0.4 }}>
             <ListOrdered size={20} color={c.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowNoteModal(true)} style={{ padding: 6 }}>
+            <StickyNote size={20} color={c.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleToggleBookmark} style={{ padding: 6 }}>
             <Bookmark size={20} color={isBookmarked ? c.primary : c.textSecondary} fill={isBookmarked ? c.primary : 'transparent'} />

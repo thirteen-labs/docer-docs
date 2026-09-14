@@ -17,6 +17,7 @@ import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import { getBookmarksByDocument, deleteBookmarkByPage } from '@/db/bookmarks';
 import { insertHighlight } from '@/db/highlights';
+import { upsertHistory } from '@/db/history';
 
 export default function EpubReaderScreen() {
   const c = useTheme();
@@ -66,6 +67,26 @@ export default function EpubReaderScreen() {
       setIsBookmarked(matched);
     })();
   }, [id, currentChapter, epubData]);
+
+  const recordProgress = useCallback(async () => {
+    if (!id || !epubData) return;
+    const db = await getDb();
+    await upsertHistory(db, {
+      id: `hist-${id}`,
+      documentId: id,
+      lastPage: currentChapter,
+      lastPosition: null,
+      progress: epubData.chapters.length > 0 ? currentChapter / epubData.chapters.length : 0,
+      startedAt: new Date().toISOString(),
+      lastReadAt: new Date().toISOString(),
+      readCount: 1,
+      totalReadingTime: 0,
+    });
+  }, [id, currentChapter, epubData]);
+
+  useEffect(() => {
+    if (epubData) recordProgress();
+  }, [currentChapter, epubData, recordProgress]);
 
   const handleToggleBookmark = useCallback(async () => {
     if (!id || !epubData) return;
