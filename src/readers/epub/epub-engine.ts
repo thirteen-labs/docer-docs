@@ -231,7 +231,7 @@ function mimeFromName(name: string): string {
 async function inlineResources(html: string, zip: JSZip, baseDir: string): Promise<string> {
   const imgRe = /src\s*=\s*("([^"]*)"|'([^']*)')/gi;
   const cssRe = /<link\b[^>]*\bhref\s*=\s*("([^"]*\.css)"|'([^']*\.css)')[^>]*>/gi;
-  const toInline: Array<{ find: string; replace: string }> = [];
+  const toInline: { find: string; replace: string }[] = [];
 
   let m: RegExpExecArray | null;
   const seen = new Set<string>();

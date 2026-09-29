@@ -33,7 +33,7 @@ import { isSupportedExtension } from '@/services/discovery/registry';
 import { File } from 'expo-file-system';
 import type { MediaChangeEvent } from '@obsidian_north/react-native-mediastore';
 
-const INDEXABLE_TYPES = new Set(['epub', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'rtf', 'code', 'pdf']);
+
 
 /**
  * Central orchestrator for device-wide document discovery.

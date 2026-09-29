@@ -197,6 +197,37 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
     `);
   },
+
+  // v7: Reading history upsert support
+  // recordProgress relies on ON CONFLICT(document_id), which SQLite rejects
+  // unless document_id carries a uniqueness constraint. Without this index every
+  // history write threw, so progress and "Continue reading" never updated.
+  async (db: SQLiteDatabase) => {
+    await db.execAsync(`
+      DELETE FROM reading_history
+      WHERE rowid NOT IN (SELECT MAX(rowid) FROM reading_history GROUP BY document_id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_history_document
+        ON reading_history(document_id);
+
+      CREATE INDEX IF NOT EXISTS idx_reading_history_last_read_at
+        ON reading_history(last_read_at);
+    `);
+  },
+
+  // v8: Daily stats upsert support
+  // The daily counters are accumulated with ON CONFLICT(date) DO UPDATE, which
+  // SQLite only accepts when `date` is unique. Previously `date` was unindexed,
+  // so concurrent increments could not be expressed safely.
+  async (db: SQLiteDatabase) => {
+    await db.execAsync(`
+      DELETE FROM reading_stats
+      WHERE rowid NOT IN (SELECT MIN(rowid) FROM reading_stats GROUP BY date);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_stats_date
+        ON reading_stats(date);
+    `);
+  },
 ];
 
 const MIGRATION_TABLE = `

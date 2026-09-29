@@ -6,20 +6,27 @@ import { useTheme } from '@/hooks/use-theme';
 import { getDb } from '@/db/connection';
 import { getRecentDocuments } from '@/db/documents';
 import { clearHistory } from '@/db/history';
+import { useDocumentStore } from '@/stores/document-store';
 import type { Document } from '@/types';
 
 export function HistoryScreen() {
   const c = useTheme();
   const [history, setHistory] = useState<(Document & { lastReadAt: string; progress: number })[]>([]);
+  const fetchRecentDocuments = useDocumentStore((s) => s.fetchRecentDocuments);
 
   useEffect(() => {
-    getDb().then((db) => getRecentDocuments(db, 50)).then(setHistory);
+    getDb()
+      .then((db) => getRecentDocuments(db, 50))
+      .then(setHistory)
+      .catch((e) => console.warn('[HistoryScreen] load failed', e));
   }, []);
 
   const handleClear = async () => {
     const db = await getDb();
     await clearHistory(db);
     setHistory([]);
+    // Keep the home screen's "Continue reading" in sync with the cleared table.
+    fetchRecentDocuments();
   };
 
   return (

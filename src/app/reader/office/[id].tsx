@@ -3,17 +3,24 @@ import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Search, X, ZoomIn, ZoomOut, FileSpreadsheet, FileText, Presentation, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { useTheme } from '@/hooks/use-theme';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import { renderDocx, renderXlsx, renderPptx } from '@/readers/office/office-engine';
-import { upsertHistory } from '@/db/history';
+import { useReadingProgress } from '@/hooks/use-reading-progress';
+import { SCROLL_TRACKER_JS, parseScrollProgress } from '@/readers/shared/scroll-progress';
 
 export default function OfficeReaderScreen() {
-  const c = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Keying on the document id makes React remount for a different document, so
+  // the previously rendered HTML and toolbar state cannot linger.
+  return <OfficeReader key={id ?? ''} id={id} />;
+}
+
+function OfficeReader({ id }: { id: string }) {
+  const c = useTheme();
   const [docName, setDocName] = useState('Office Document');
   const [officeType, setOfficeType] = useState<'word' | 'excel' | 'ppt'>('word');
   const [zoom, setZoom] = useState(1);
@@ -23,12 +30,29 @@ export default function OfficeReaderScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const webViewRef = useRef<WebView>(null);
+  const [scrollProgress, setScrollProgress] = useState(0);
+
+  const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
+    const ratio = parseScrollProgress(event.nativeEvent.data);
+    if (ratio !== null) setScrollProgress(ratio);
+  }, []);
+
+  // Office documents have no pages, so completion follows scroll position.
+  useReadingProgress({
+    documentId: id,
+    page: 1,
+    total: 0,
+    progressRatio: scrollProgress,
+    enabled: !loading && !error,
+  });
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     (async () => {
       const db = await getDb();
       const doc = await getDocumentById(db, id);
+      if (cancelled) return;
       if (!doc) { setError('Document not found'); setLoading(false); return; }
       setDocName(doc.name);
       const ext = doc.name.split('.').pop()?.toLowerCase() || '';
@@ -48,23 +72,14 @@ export default function OfficeReaderScreen() {
           setOfficeType('word');
           rendered = await renderDocx(doc.path);
         }
+        if (cancelled) return;
         setHtml(rendered);
-        await upsertHistory(db, {
-          id: `hist-${id}`,
-          documentId: id,
-          lastPage: 1,
-          lastPosition: null,
-          progress: 1,
-          startedAt: new Date().toISOString(),
-          lastReadAt: new Date().toISOString(),
-          readCount: 1,
-          totalReadingTime: 0,
-        });
       } catch (e: any) {
-        setError(e.message || 'Failed to render document');
+        if (!cancelled) setError(e.message || 'Failed to render document');
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [id]);
 
   const handleFind = useCallback((query: string) => {
@@ -153,8 +168,13 @@ export default function OfficeReaderScreen() {
         ref={webViewRef}
         source={{ html: styledHtml || '' }}
         style={{ flex: 1, backgroundColor: 'transparent' }}
-        javaScriptEnabled={false}
+        // JS is required by the renderers themselves: the PPTX slide navigation
+        // and the XLSX sheet tabs are inline onclick handlers. Content is
+        // generated locally from the parsed file, not fetched from the network.
+        javaScriptEnabled
         domStorageEnabled={false}
+        injectedJavaScriptBeforeContentLoaded={SCROLL_TRACKER_JS}
+        onMessage={handleWebViewMessage}
         startInLoadingState
         renderLoading={() => (
           <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>

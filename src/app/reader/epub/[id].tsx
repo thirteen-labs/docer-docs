@@ -17,11 +17,17 @@ import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import { getBookmarksByDocument, deleteBookmarkByPage } from '@/db/bookmarks';
 import { insertHighlight } from '@/db/highlights';
-import { upsertHistory } from '@/db/history';
+import { useReadingProgress } from '@/hooks/use-reading-progress';
 
 export default function EpubReaderScreen() {
-  const c = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Keying on the document id makes React remount when a different book is
+  // opened, so no state from the previous one leaks into this screen.
+  return <EpubReader key={id ?? ''} id={id} />;
+}
+
+function EpubReader({ id }: { id: string }) {
+  const c = useTheme();
   const [epubData, setEpubData] = useState<EpubData | null>(null);
   const [currentChapter, setCurrentChapter] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
@@ -40,21 +46,25 @@ export default function EpubReaderScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     const load = async () => {
       await openDocument(id);
       const db = await getDb();
       const doc = await getDocumentById(db, id);
+      if (cancelled) return;
       if (!doc) { setError('Document not found'); setLoading(false); return; }
       setDocName(doc.name);
       try {
         const data = await parseEpub(doc.path);
+        if (cancelled) return;
         setEpubData(data);
       } catch (e: any) {
-        setError(e.message || 'Failed to parse EPUB');
+        if (!cancelled) setError(e.message || 'Failed to parse EPUB');
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     };
     load();
+    return () => { cancelled = true; };
   }, [id, openDocument]);
 
   useEffect(() => {
@@ -68,25 +78,13 @@ export default function EpubReaderScreen() {
     })();
   }, [id, currentChapter, epubData]);
 
-  const recordProgress = useCallback(async () => {
-    if (!id || !epubData) return;
-    const db = await getDb();
-    await upsertHistory(db, {
-      id: `hist-${id}`,
-      documentId: id,
-      lastPage: currentChapter,
-      lastPosition: null,
-      progress: epubData.chapters.length > 0 ? currentChapter / epubData.chapters.length : 0,
-      startedAt: new Date().toISOString(),
-      lastReadAt: new Date().toISOString(),
-      readCount: 1,
-      totalReadingTime: 0,
-    });
-  }, [id, currentChapter, epubData]);
-
-  useEffect(() => {
-    if (epubData) recordProgress();
-  }, [currentChapter, epubData, recordProgress]);
+  // Chapter indices are 0-based; record 1-based so the last chapter reaches 100%.
+  useReadingProgress({
+    documentId: id,
+    page: currentChapter + 1,
+    total: epubData?.chapters.length ?? 0,
+    enabled: !loading && !error && !!epubData,
+  });
 
   const handleToggleBookmark = useCallback(async () => {
     if (!id || !epubData) return;

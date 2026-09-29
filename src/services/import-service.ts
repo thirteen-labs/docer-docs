@@ -150,7 +150,10 @@ export async function importFile(
       type: docType,
       mimeType: options?.mimeType ?? mimeType,
       size: fileSize,
-      pageCount: type === 'pdf' ? 1 : null,
+      // Left null until the reader reports the real length. A hardcoded 1 made
+      // PDF progress read as 100% on a many-page document, since progress is
+      // currentPage / pageCount.
+      pageCount: null,
       author: null,
       createdAt: options?.modifiedAt || now,
       modifiedAt: options?.modifiedAt || now,

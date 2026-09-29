@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Bookmark, WrapText, ListOrdered, StickyNote } from 'lucide-react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { useTheme } from '@/hooks/use-theme';
 import { useThemeStore } from '@/stores/theme-store';
@@ -15,7 +15,8 @@ import { AddBookmarkModal } from '@/features/annotations/add-bookmark-modal';
 import { AddNoteModal } from '@/features/annotations/add-note-modal';
 import { getDb } from '@/db/connection';
 import { getBookmarkByPage, deleteBookmarkByPage } from '@/db/bookmarks';
-import { upsertHistory } from '@/db/history';
+import { useReadingProgress } from '@/hooks/use-reading-progress';
+import { SCROLL_TRACKER_JS, parseScrollProgress } from '@/readers/shared/scroll-progress';
 
 type TextRenderMode = 'plain' | 'highlighted' | 'markdown';
 
@@ -28,8 +29,15 @@ function getHtmlBaseUrl(path: string): string {
 }
 
 export default function TextReaderScreen() {
-  const c = useTheme();
   const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
+  // Keying on the document identity makes React remount when a different file
+  // is opened, so the previous file's content and toolbar state cannot linger.
+  const key = `${id ?? ''}|${preview ?? ''}|${name ?? ''}`;
+  return <TextReader key={key} id={id} preview={preview} name={name} />;
+}
+
+function TextReader({ id, preview, name }: { id: string; preview?: string; name?: string }) {
+  const c = useTheme();
   const [content, setContent] = useState<string | null>(null);
   const [rawText, setRawText] = useState('');
   const [renderMode, setRenderMode] = useState<TextRenderMode>('plain');
@@ -44,6 +52,9 @@ export default function TextReaderScreen() {
   const [htmlFilePath, setHtmlFilePath] = useState<string | null>(null);
   const isDark = useThemeStore((s) => s.theme !== 'light');
   const webViewRef = useRef<WebView>(null);
+  // Text files have no pages, so completion is driven by how far the reader has
+  // scrolled. The tracker only reports on >1% movement, keeping this cheap.
+  const [scrollProgress, setScrollProgress] = useState(0);
 
   const regenContent = useCallback(() => {
     if (!rawText) return;
@@ -57,12 +68,14 @@ export default function TextReaderScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     (async () => {
       if (preview) {
         const previewPath = decodeURIComponent(preview);
         const entryName = name ? decodeURIComponent(name) : 'Document';
         setFileName(entryName);
         const resolved = await ensureLocalUri(previewPath, entryName);
+        if (cancelled) return;
         const ext = entryName.split('.').pop()?.toLowerCase() || '';
         if (['html', 'htm'].includes(ext)) {
           setHtmlFilePath(resolved);
@@ -91,6 +104,7 @@ export default function TextReaderScreen() {
       }
 
       const { doc, content: fileContent, resolvedUri } = await loadDocument(id);
+      if (cancelled) return;
       if (!doc) { setError('Document not found'); setLoading(false); return; }
       setFileName(doc.name);
       const text = fileContent || '';
@@ -118,6 +132,7 @@ export default function TextReaderScreen() {
       }
       setLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [id, preview, name]);
 
   useEffect(() => {
@@ -129,25 +144,18 @@ export default function TextReaderScreen() {
     })();
   }, [id, preview]);
 
-  const recordProgress = useCallback(async () => {
-    if (!id || preview) return;
-    const db = await getDb();
-    await upsertHistory(db, {
-      id: `hist-${id}`,
-      documentId: id,
-      lastPage: 1,
-      lastPosition: null,
-      progress: 1,
-      startedAt: new Date().toISOString(),
-      lastReadAt: new Date().toISOString(),
-      readCount: 1,
-      totalReadingTime: 0,
-    });
-  }, [id, preview]);
+  const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
+    const ratio = parseScrollProgress(event.nativeEvent.data);
+    if (ratio !== null) setScrollProgress(ratio);
+  }, []);
 
-  useEffect(() => {
-    if (!loading && !error) recordProgress();
-  }, [loading, error, recordProgress]);
+  useReadingProgress({
+    documentId: id,
+    page: 1,
+    total: 0,
+    progressRatio: scrollProgress,
+    enabled: !loading && !error && !preview,
+  });
 
   const handleToggleBookmark = useCallback(async () => {
     if (!id) return;
@@ -187,16 +195,39 @@ export default function TextReaderScreen() {
         <TouchableOpacity onPress={() => router.back()}><ArrowLeft size={24} color={c.text} /></TouchableOpacity>
         <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: c.text, textAlign: 'center' }} numberOfLines={1}>{fileName}</Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity onPress={() => { setWordWrap(!wordWrap); }} style={{ padding: 6, opacity: wordWrap ? 1 : 0.4 }}>
+          <TouchableOpacity
+            onPress={() => { setWordWrap(!wordWrap); }}
+            style={{ padding: 6, opacity: wordWrap ? 1 : 0.4 }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: wordWrap }}
+            accessibilityLabel="Word wrap"
+          >
             <WrapText size={20} color={c.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setShowLineNumbers(!showLineNumbers); }} style={{ padding: 6, opacity: showLineNumbers ? 1 : 0.4 }}>
+          <TouchableOpacity
+            onPress={() => { setShowLineNumbers(!showLineNumbers); }}
+            style={{ padding: 6, opacity: showLineNumbers ? 1 : 0.4 }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: showLineNumbers }}
+            accessibilityLabel="Line numbers"
+          >
             <ListOrdered size={20} color={c.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowNoteModal(true)} style={{ padding: 6 }}>
+          <TouchableOpacity
+            onPress={() => setShowNoteModal(true)}
+            style={{ padding: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel="Add note"
+          >
             <StickyNote size={20} color={c.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleToggleBookmark} style={{ padding: 6 }}>
+          <TouchableOpacity
+            onPress={handleToggleBookmark}
+            style={{ padding: 6 }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isBookmarked }}
+            accessibilityLabel={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
+          >
             <Bookmark size={20} color={isBookmarked ? c.primary : c.textSecondary} fill={isBookmarked ? c.primary : 'transparent'} />
           </TouchableOpacity>
         </View>
@@ -217,7 +248,17 @@ export default function TextReaderScreen() {
           )}
         />
       ) : (
-        <WebView ref={webViewRef} source={{ html: content || '' }} style={{ flex: 1, backgroundColor: 'transparent' }} javaScriptEnabled={false} />
+        <WebView
+          ref={webViewRef}
+          source={{ html: content || '' }}
+          style={{ flex: 1, backgroundColor: 'transparent' }}
+          // The document HTML is generated locally and its content is escaped,
+          // so JS is safe here and is required for the scroll tracker.
+          javaScriptEnabled
+          domStorageEnabled={false}
+          injectedJavaScriptBeforeContentLoaded={SCROLL_TRACKER_JS}
+          onMessage={handleWebViewMessage}
+        />
       )}
 
       {id && !preview && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft, Clock, BookOpen, Flame, TrendingUp } from 'lucide-react-native';
@@ -9,33 +9,28 @@ import { useStatsStore } from '@/stores/stats-store';
 
 type Period = 'week' | 'month';
 
-function getDateRange(period: Period): { from: string; to: string; labels: string[] } {
+function getDateRange(period: Period): { from: string; to: string; labels: string[]; dates: string[] } {
   const now = new Date();
   const to = now.toISOString().split('T')[0];
-  if (period === 'week') {
-    const from = new Date(now);
-    from.setDate(now.getDate() - 6);
-    const labels: string[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      labels.push(d.toLocaleDateString('en', { weekday: 'short' }));
-    }
-    return { from: from.toISOString().split('T')[0], to, labels };
-  }
-  const from = new Date(now);
-  from.setDate(now.getDate() - 29);
+  const days = period === 'week' ? 7 : 30;
   const labels: string[] = [];
-  for (let i = 29; i >= 0; i--) {
+  const dates: string[] = [];
+
+  for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
-    if (i % 5 === 0 || i === 0) {
+    dates.push(d.toISOString().split('T')[0]);
+
+    if (period === 'week') {
+      labels.push(d.toLocaleDateString('en', { weekday: 'short' }));
+    } else if (i % 5 === 0 || i === 0) {
       labels.push(d.toLocaleDateString('en', { month: 'short', day: 'numeric' }));
     } else {
       labels.push('');
     }
   }
-  return { from: from.toISOString().split('T')[0], to, labels };
+
+  return { from: dates[0], to, labels, dates };
 }
 
 function BarChart({ data, labels, maxValue, color }: { data: number[]; labels: string[]; maxValue: number; color: string }) {
@@ -92,12 +87,32 @@ export default function StatsScreen() {
     fetchTodayStats();
     fetchReadingStreak();
     loadRange();
+    // Reading time is recorded by the readers, so refresh whenever the screen
+    // comes back into view rather than showing whatever was there on mount.
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        fetchTodayStats();
+        fetchReadingStreak();
+        loadRange();
+      }
+    });
+    return () => sub.remove();
   }, [fetchTodayStats, fetchReadingStreak, loadRange]);
 
-  const { labels } = getDateRange(period);
+  const { labels, dates } = getDateRange(period);
 
-  const pageData = rangeStats.map((s) => s.pages_read);
-  const timeData = rangeStats.map((s) => Math.round(s.reading_time / 60));
+  // reading_stats only has rows for days with activity, but the chart pairs
+  // labels[i] with data[i]. Fill the gaps so days with no reading render as a
+  // zero bar in the right position instead of shifting the whole series left.
+  const byDate = new Map(rangeStats.map((s) => [s.date, s]));
+  const pageData: number[] = [];
+  const timeData: number[] = [];
+  for (let i = 0; i < dates.length; i++) {
+    const day = byDate.get(dates[i]);
+    pageData.push(day?.pages_read ?? 0);
+    timeData.push(Math.round((day?.reading_time ?? 0) / 60));
+  }
+
   const maxPages = Math.max(...pageData, 1);
   const maxTime = Math.max(...timeData, 1);
   const totalPages = pageData.reduce((a, b) => a + b, 0);

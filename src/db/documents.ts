@@ -3,6 +3,24 @@ import type { Document, SortBy, SortOrder } from '@/types';
 
 const DOC_COLUMNS = `id, name, path, type, mime_type AS mimeType, size, page_count AS pageCount, author, created_at AS createdAt, modified_at AS modifiedAt, added_at AS addedAt, metadata, thumbnail_path AS thumbnailPath, is_hidden AS isHidden, source`;
 
+/**
+ * Table-qualifies DOC_COLUMNS for use in a multi-table query. Queries joining
+ * `documents` against `reading_history` or `documents_fts` must qualify, since
+ * both of those tables also expose `id`, and `documents_fts` exposes `name` and
+ * `author` — SQLite rejects the unqualified form as ambiguous.
+ */
+function qualifiedColumns(alias: string): string {
+  return DOC_COLUMNS.split(',')
+    .map((part) => {
+      const tokens = part.trim().split(/\s+/);
+      // Preserve "col AS alias"; only the source column gets qualified.
+      return tokens.length === 3 && tokens[1].toUpperCase() === 'AS'
+        ? `${alias}.${tokens[0]} AS ${tokens[2]}`
+        : `${alias}.${tokens.join(' ')}`;
+    })
+    .join(', ');
+}
+
 export interface DocumentQueryOptions {
   category?: string | null;
   sortBy?: SortBy;
@@ -49,7 +67,10 @@ export async function getAllDocuments(db: SQLiteDatabase, opts?: DocumentQueryOp
 
 export async function getDocumentsTotal(db: SQLiteDatabase, category?: string | null): Promise<number> {
   const { clause, params } = categoryWhere(category ?? null);
-  const row = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM documents ${clause}`, ...params);
+  // Hidden documents are excluded everywhere else in the UI; counting them here
+  // made the header and the Explore "All" filter disagree with the library list.
+  const where = clause ? `${clause} AND is_hidden = 0` : 'WHERE is_hidden = 0';
+  const row = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM documents ${where}`, ...params);
   return row?.c ?? 0;
 }
 
@@ -119,22 +140,28 @@ export async function getDocumentsByCategory(
   return queryDocuments(db, { ...(opts ?? {}), category });
 }
 
-export async function getCategoryCounts(db: SQLiteDatabase): Promise<{ type: string; count: number }[]> {
-  return db.getAllAsync<{ type: string; count: number }>(
-    `SELECT CASE
+const CATEGORY_CASE_SQL = `CASE
       WHEN type IN ('pdf') THEN 'pdf'
       WHEN type IN ('epub') THEN 'epub'
       WHEN type IN ('doc','docx','xls','xlsx','ppt','pptx','csv','rtf') THEN 'office'
       WHEN type = 'image' THEN 'image'
       WHEN type = 'archive' THEN 'archive'
       WHEN type IN ('txt','md','code') THEN 'text'
-      ELSE 'other' END AS type, COUNT(*) as count FROM documents GROUP BY type`
+      ELSE 'other' END`;
+
+export async function getCategoryCounts(db: SQLiteDatabase): Promise<{ type: string; count: number }[]> {
+  // Group by the CASE result, not the raw column: grouping by `type` resolves to
+  // the underlying column, so 'doc' and 'docx' would each return a separate
+  // "office" row and the library would show split counts and duplicate chips.
+  return db.getAllAsync<{ type: string; count: number }>(
+    `SELECT ${CATEGORY_CASE_SQL} AS type, COUNT(*) as count
+     FROM documents WHERE is_hidden = 0 GROUP BY 1`
   );
 }
 
 export async function searchDocuments(db: SQLiteDatabase, query: string): Promise<Document[]> {
   return db.getAllAsync<Document>(
-    `SELECT ${DOC_COLUMNS.replace(/^id, /, 'doc.id, ')} FROM documents doc
+    `SELECT ${qualifiedColumns('doc')} FROM documents doc
      JOIN documents_fts fts ON doc.rowid = fts.rowid WHERE documents_fts MATCH ? ORDER BY rank`,
     `${query}*`
   );
@@ -142,7 +169,7 @@ export async function searchDocuments(db: SQLiteDatabase, query: string): Promis
 
 export async function getRecentDocuments(db: SQLiteDatabase, limit = 20): Promise<(Document & { lastReadAt: string; progress: number })[]> {
   return db.getAllAsync(
-    `SELECT ${DOC_COLUMNS}, rh.last_read_at AS lastReadAt, rh.progress FROM documents d
+    `SELECT ${qualifiedColumns('d')}, rh.last_read_at AS lastReadAt, rh.progress FROM documents d
      JOIN reading_history rh ON rh.document_id = d.id
      WHERE d.is_hidden = 0
      ORDER BY rh.last_read_at DESC LIMIT ?`,

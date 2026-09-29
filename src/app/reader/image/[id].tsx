@@ -11,8 +11,15 @@ import { loadDocumentUri } from '@/services/reader-loader';
 import { shareDocument } from '@/services/file-operations';
 
 export default function ImageViewerScreen() {
-  const c = useTheme();
   const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
+  // Keying on the document identity makes React remount for a different image,
+  // so the previous image and its zoom/rotation state cannot linger.
+  const key = `${id ?? ''}|${preview ?? ''}|${name ?? ''}`;
+  return <ImageViewer key={key} id={id} preview={preview} name={name} />;
+}
+
+function ImageViewer({ id, preview, name }: { id: string; preview?: string; name?: string }) {
+  const c = useTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [uri, setUri] = useState<string | null>(null);
   const [fileName, setFileName] = useState('Image');
@@ -37,17 +44,21 @@ export default function ImageViewerScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     (async () => {
       if (preview) {
+        if (cancelled) return;
         setFileName(name ? decodeURIComponent(name) : 'Image');
         setUri(decodeURIComponent(preview));
         setLoading(false);
         return;
       }
       const { doc, uri: fileUri, resolvedUri } = await loadDocumentUri(id);
+      if (cancelled) return;
       if (doc) { setFileName(doc.name); setUri(resolvedUri || fileUri); }
       setLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [id, preview, name]);
 
   if (loading) {

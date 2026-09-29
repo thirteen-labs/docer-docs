@@ -21,8 +21,6 @@ import { appStorage } from '@/storage';
  * Connected folder URIs are persisted so re-scans happen automatically.
  */
 
-const CONNECTED_LOCATIONS_KEY = 'connected_folder_uris';
-
 function getConnectedLocations(): string[] {
   return appStorage.getConnectedLocations();
 }

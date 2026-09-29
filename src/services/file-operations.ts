@@ -43,24 +43,38 @@ export async function renameDocument(id: string, newName: string): Promise<boole
   }
 }
 
+/**
+ * Discovered documents are indexed by reference, not copied, so `path` points
+ * at a file the user owns outside the app. Only app-owned copies (imports) may
+ * be removed from disk.
+ */
+function isAppOwned(doc: Document): boolean {
+  return doc.source === 'import' || doc.source === 'downloaded';
+}
+
 export async function deleteDocument(id: string): Promise<boolean> {
+  const db = await getDb();
+  const doc = await getDocumentById(db, id);
+  if (!doc) return false;
+
+  const owned = isAppOwned(doc);
   return new Promise((resolve) => {
     Alert.alert(
       'Delete Document',
-      'Are you sure you want to delete this document? This will also remove all associated bookmarks, highlights, and notes.',
+      owned
+        ? 'This will also remove all associated bookmarks, highlights, and notes.'
+        : 'This removes it from your library along with its bookmarks, highlights, and notes. The original file on your device is kept.',
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         {
           text: 'Delete', style: 'destructive',
           onPress: async () => {
             try {
-              const db = await getDb();
-              const doc = await getDocumentById(db, id);
-              if (doc) {
+              if (owned) {
                 await FileSystem.deleteAsync(doc.path, { idempotent: true });
-                if (doc.thumbnailPath) {
-                  await FileSystem.deleteAsync(doc.thumbnailPath, { idempotent: true });
-                }
+              }
+              if (doc.thumbnailPath) {
+                await FileSystem.deleteAsync(doc.thumbnailPath, { idempotent: true });
               }
               await deleteDocFromDb(db, id);
               resolve(true);

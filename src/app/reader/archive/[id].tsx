@@ -15,8 +15,14 @@ import * as Sharing from 'expo-sharing';
 const PREVIEWABLE_EXTS = new Set(['txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'svg', 'pdf']);
 
 export default function ArchiveExplorerScreen() {
-  const c = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Keying on the archive id makes React remount for a different archive, so
+  // the previous listing and current path cannot linger.
+  return <ArchiveExplorer key={id ?? ''} id={id} />;
+}
+
+function ArchiveExplorer({ id }: { id: string }) {
+  const c = useTheme();
   const [docName, setDocName] = useState('Archive');
   const [docPath, setDocPath] = useState('');
   const [entries, setEntries] = useState<ArchiveEntry[]>([]);
@@ -29,26 +35,30 @@ export default function ArchiveExplorerScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     (async () => {
       const db = await getDb();
       const doc = await getDocumentById(db, id);
+      if (cancelled) return;
       if (!doc) { setError('Document not found'); setLoading(false); return; }
       setDocName(doc.name);
       setDocPath(doc.path);
       try {
         const stat = new File(doc.path).info();
         if ((stat.size ?? 0) > 300 * 1024 * 1024) {
-          setError('This archive is too large to browse in this version (over 300 MB).');
+          if (!cancelled) setError('This archive is too large to browse in this version (over 300 MB).');
           setLoading(false);
           return;
         }
         const all = await listArchiveEntries(doc.path);
+        if (cancelled) return;
         setEntries(all);
       } catch (e: any) {
-        setError(e.message || 'Failed to read archive');
+        if (!cancelled) setError(e.message || 'Failed to read archive');
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [id]);
 
   const filteredEntries = searchOpen && searchQuery.trim()

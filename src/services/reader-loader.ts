@@ -1,4 +1,4 @@
-import { File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { getDb } from '@/db/connection';
 import { getDocumentById } from '@/db/documents';
 import type { Document } from '@/types';

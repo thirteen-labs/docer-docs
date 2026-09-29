@@ -14,14 +14,23 @@ import { useTheme } from '@/hooks/use-theme';
 import { useReaderStore } from '@/stores/reader-store';
 import { useDocumentStore } from '@/stores/document-store';
 import { getDb } from '@/db/connection';
-import { getDocumentById } from '@/db/documents';
-import { upsertHistory, getHistoryByDocument } from '@/db/history';
+import { getDocumentById, updateDocument } from '@/db/documents';
+import { getHistoryByDocument } from '@/db/history';
 import { getBookmarkByPage, deleteBookmarkByPage } from '@/db/bookmarks';
 import { insertHighlight } from '@/db/highlights';
+import { useReadingProgress } from '@/hooks/use-reading-progress';
 
 export default function PDFReaderScreen() {
-  const c = useTheme();
   const { id, preview, name } = useLocalSearchParams<{ id: string; preview?: string; name?: string }>();
+  // Expo Router reuses the screen instance when only the route param changes,
+  // which would leave the previous document rendered. Keying on the identity of
+  // the document makes React remount and reset every piece of reader state.
+  const key = `${id ?? ''}|${preview ?? ''}|${name ?? ''}`;
+  return <PdfReader key={key} id={id} preview={preview} name={name} />;
+}
+
+function PdfReader({ id, preview, name }: { id: string; preview?: string; name?: string }) {
+  const c = useTheme();
   const [docPath, setDocPath] = useState<string | null>(null);
   const [docName, setDocName] = useState('Document');
   const [loading, setLoading] = useState(true);
@@ -32,6 +41,7 @@ export default function PDFReaderScreen() {
   const [selectedText, setSelectedText] = useState('');
   const [showHighlightToolbar, setShowHighlightToolbar] = useState(false);
   const currentPage = useReaderStore((s) => s.currentPage);
+  const totalPages = useReaderStore((s) => s.totalPages);
   const zoom = useReaderStore((s) => s.zoom);
   const setTotalPages = useReaderStore((s) => s.setTotalPages);
   const setZoom = useReaderStore((s) => s.setZoom);
@@ -46,8 +56,10 @@ export default function PDFReaderScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     const load = async () => {
       if (preview) {
+        if (cancelled) return;
         setDocPath(decodeURIComponent(preview));
         setDocName(name ? decodeURIComponent(name) : 'Document');
         setLoading(false);
@@ -56,11 +68,13 @@ export default function PDFReaderScreen() {
       await openDocument(id);
       const db = await getDb();
       const doc = await getDocumentById(db, id);
+      if (cancelled) return;
       if (doc) {
         setDocPath(doc.path);
         setDocName(doc.name);
         if (doc.pageCount) setTotalPages(doc.pageCount);
         const hist = await getHistoryByDocument(db, id);
+        if (cancelled) return;
         if (hist?.last_page && hist.last_page > 1) {
           initialPageRef.current = hist.last_page;
           setCurrentPage(hist.last_page);
@@ -72,7 +86,10 @@ export default function PDFReaderScreen() {
       }
     };
     load();
-    return () => resetReader();
+    return () => {
+      cancelled = true;
+      resetReader();
+    };
   }, [id, preview, name, openDocument, resetReader, setTotalPages, setCurrentPage]);
 
   useEffect(() => {
@@ -84,35 +101,29 @@ export default function PDFReaderScreen() {
     })();
   }, [id, currentPage, preview]);
 
-  const recordProgress = useCallback(async () => {
-    if (!id || !currentDocument) return;
-    const db = await getDb();
-    await upsertHistory(db, {
-      id: `hist-${id}`,
-      documentId: id,
-      lastPage: currentPage,
-      lastPosition: null,
-      progress: currentDocument.pageCount ? currentPage / currentDocument.pageCount : 0,
-      startedAt: new Date().toISOString(),
-      lastReadAt: new Date().toISOString(),
-      readCount: 1,
-      totalReadingTime: 0,
-    });
-  }, [id, currentDocument, currentPage]);
+  useReadingProgress({
+    documentId: id,
+    page: currentPage,
+    total: totalPages,
+    enabled: !preview,
+  });
 
-  const handleLoad = useCallback((totalPages: number) => {
-    setTotalPages(totalPages);
-    recordProgress();
+  const handleLoad = useCallback((loadedTotal: number) => {
+    setTotalPages(loadedTotal);
+    // The stored page count is only a cache; refresh it once the real length is
+    // known so progress and the thumbnail rail are correct next time.
+    if (loadedTotal > 0 && currentDocument && currentDocument.pageCount !== loadedTotal) {
+      getDb()
+        .then((db) => updateDocument(db, id!, { pageCount: loadedTotal }))
+        .then(() => openDocument(id!))
+        .catch(() => {});
+    }
     if (initialPageRef.current > 1) {
       const target = initialPageRef.current;
       initialPageRef.current = 1;
       setTimeout(() => actionsRef.current?.goToPage(target), 50);
     }
-  }, [setTotalPages, recordProgress]);
-
-  useEffect(() => {
-    if (currentPage > 0) recordProgress();
-  }, [currentPage, recordProgress]);
+  }, [setTotalPages, currentDocument, id, openDocument]);
 
   const handleToggleBookmark = useCallback(async () => {
     if (!id || preview) return;
@@ -195,7 +206,7 @@ export default function PDFReaderScreen() {
       <View style={{ flex: 1, flexDirection: 'row' }}>
         {showThumbnails && (
           <PdfThumbnailSidebar
-            pageCount={currentDocument?.pageCount ?? 0}
+            pageCount={totalPages}
             currentPage={currentPage}
             onPageSelect={(page) => actionsRef.current?.goToPage(page)}
           />
@@ -211,7 +222,7 @@ export default function PDFReaderScreen() {
 
       <PdfBottomBar
         currentPage={currentPage}
-        totalPages={currentDocument?.pageCount ?? 0}
+        totalPages={totalPages}
         zoom={zoom}
         scrollMode={'continuous'}
         onPrevPage={() => actionsRef.current?.goToPage(Math.max(1, currentPage - 1))}

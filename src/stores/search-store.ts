@@ -68,7 +68,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       if (filters.inNotes) {
         const notes = await searchNotes(db, query);
         combined = combined.concat(
-          (notes as Array<{ document_id: string; documentName: string; documentType: string; content: string }>).map((n) => ({
+          (notes as { document_id: string; documentName: string; documentType: string; content: string }[]).map((n) => ({
             documentId: n.document_id,
             documentName: n.documentName,
             documentType: n.documentType,
@@ -82,7 +82,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       if (filters.inBookmarks) {
         const bms = await searchBookmarks(db, query);
         combined = combined.concat(
-          (bms as Array<{ document_id: string; documentName: string; label: string }>).map((b) => ({
+          (bms as { document_id: string; documentName: string; label: string }[]).map((b) => ({
             documentId: b.document_id,
             documentName: b.documentName,
             documentType: b.label ? 'bookmark' : 'bookmark',
